@@ -10,6 +10,10 @@
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { fetchUrl, pMap, finding, pageUrl, plainUrl } from '../lib.mjs';
+import { listingKey, listingUrl } from '#lib/paths.mjs';
+
+/** An inventory row served as a folder index: its URL keeps the listing's trailing slash where its key does not (root excepted). Pure. */
+export const isFolderIndex = (p) => { const u = p.url || p.path || ''; return listingUrl(u) !== listingKey(u); };
 
 /** The expected redirects: stardust/redirects.tsv (`source<TAB>destination`, `#` comments). */
 function readExpected(file) {
@@ -85,7 +89,7 @@ export async function run(ctx) {
 
   // a folder index is served at /x/ and /x 404s on a plain EDS site: inbound /x links need the /x → /x/ redirect
   // (a leaf's /x/y/ 404s by design, so leaves are not sampled)
-  for (const p of pages.filter((x) => x.path !== '/' && (x.url || '').endsWith('/'))) {
+  for (const p of pages.filter(isFolderIndex)) {
     const res = await fetchUrl(pageUrl(base, p.path));
     if (res.status !== 200) {
       findings.push(finding('routing', 'trailing-slash-broken', 'warn', p.path,

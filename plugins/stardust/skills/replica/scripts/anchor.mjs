@@ -17,8 +17,8 @@
  * consume the live-hit budget (source-fidelity-gate.md § Hit minimization);
  * capture the live side once per fix round at most and diff against it.
  *
- * Hardening: live navigations go through the shared
- * ../../diff/scripts/live-session.mjs (real-Chrome UA + document-scoped
+ * Hardening: live navigations go through the diff skill's shared
+ * live-session.mjs (real-Chrome UA + document-scoped
  * standard headers, challenge fail-loud exit 3, overlay dismissal, parked
  * pointer), and the height is read AFTER a slow-scroll settle pass —
  * pre-settle height is fake on entrance-animated sites
@@ -51,27 +51,18 @@
  *   node stardust/scripts/replica/anchor.mjs "http://localhost:8791/<slug>-proposed.html" --width 1440
  *
  * Requires: playwright, and the diff skill's scripts dir alongside
- * (live-session.mjs — the replica Setup copies both).
+ * (live-session.mjs — replica Setup stages both skills).
  * Exit codes: 0 printed, 1 error, 3 bot challenge (live side blocked).
  */
 
 /* eslint-disable import/no-extraneous-dependencies, import/extensions, no-await-in-loop, no-restricted-syntax, brace-style, object-curly-newline, max-len */
 import { chromium } from 'playwright';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
-import { dirname, resolve as resolvePath } from 'path';
-import { fileURLToPath, pathToFileURL } from 'url';
+import { dirname } from 'path';
+import { loadSibling } from '#lib/resolve.mjs';
 
-// live-session.mjs lives in the diff skill's scripts dir. Two layouts exist:
-// the plugin tree (skills/replica/scripts ↔ skills/diff/scripts) and the
-// documented project copy (scripts/replica ↔ scripts/diff) — resolve either.
-const HERE = dirname(fileURLToPath(import.meta.url));
-const LIVE_SESSION = ['../../diff/scripts/live-session.mjs', '../diff/live-session.mjs']
-  .map((p) => resolvePath(HERE, p)).find((p) => existsSync(p));
-if (!LIVE_SESSION) {
-  console.error('anchor error: live-session.mjs not found (looked in ../../diff/scripts/ and ../diff/). Copy the diff skill\'s scripts dir alongside this one (replica SKILL.md § Setup).');
-  process.exit(1);
-}
-const { isLiveHttpUrl, launchStealthHeaded, newLiveContext, gotoLive, dismissOverlays, defaultWaitUntil } = await import(pathToFileURL(LIVE_SESSION).href);
+// live-session.mjs is the diff skill's; #lib/resolve.mjs finds it in either layout (plugin tree or stage.mjs copy).
+const { isLiveHttpUrl, launchStealthHeaded, newLiveContext, gotoLive, dismissOverlays, defaultWaitUntil } = await loadSibling('diff', 'live-session.mjs').catch((e) => { console.error(`anchor error: ${e.message}`); process.exit(1); });
 
 const HELP = `anchor — per-section [y, height] probe (run on BOTH sides, fix the first mismatch top-down)
 

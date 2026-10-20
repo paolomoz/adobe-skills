@@ -64,11 +64,12 @@
  * functions (classifyCaps, deriveProbeWidth, aggregateCaps, compareCaps, formatCapture,
  * formatCompare, parseArgs) are exported — the contract test runs them without a browser.
  * Requires playwright importable from this file's location and the diff skill's live-session.mjs
- * (../../diff/scripts/ or ../diff/ — replica SKILL.md § Setup copies both dirs as siblings).
+ * (either layout, via #lib/resolve.mjs — replica SKILL.md § Setup stages both skills).
  */
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, resolve as resolvePath } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
+import { sibling } from '#lib/resolve.mjs';
 
 // --help prints this file's usage header, so an agent never reads the source to learn the flags.
 if (process.argv.includes('--help') || process.argv.includes('-h')) {
@@ -90,11 +91,11 @@ const EDGE = 8; // px: a box this close to the viewport is full width
 export class UsageError extends Error { constructor(msg) { super(msg); this.code = 125; } }
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const LIVE_SESSION_CANDIDATES = ['../../diff/scripts/live-session.mjs', '../diff/live-session.mjs'];
+// live-session.mjs is the diff skill's; #lib/resolve.mjs finds it in either layout (plugin tree or stage.mjs copy).
+// Resolved lazily (in main) so the pure exports stay importable without it; a missing copy is a usage error naming the fix.
 async function loadLiveSession() {
-  const found = LIVE_SESSION_CANDIDATES.map((p) => resolvePath(HERE, p)).find((p) => existsSync(p));
-  if (!found) throw new UsageError('live-session.mjs not found (looked in ../../diff/scripts/ and ../diff/). Copy the diff skill\'s scripts dir alongside this one (replica SKILL.md § Setup).');
-  return import(pathToFileURL(found).href);
+  let url; try { url = sibling('diff', 'live-session.mjs'); } catch (e) { throw new UsageError(e.message); }
+  return import(url);
 }
 
 const splitList = (s) => String(s || '').split(',').map((x) => x.trim()).filter(Boolean);

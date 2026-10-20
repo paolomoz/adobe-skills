@@ -25,7 +25,7 @@ The spec answers the people planning a migration (what to build, reuse, fix or d
 
 `stardust/spec/spec.config.json` (reference/config.md): `origin`, `scopePath`, `template` rule, `parser` profile
 (`aem-classic`, `aem-core`, or `generic` for any other site) + main selector, optional `maxPages`, `rum`,
-`referenceBlocks`. Copy the spec, diff, dynamics and deploy scripts to `stardust/scripts/<skill>/` (the stages import them).
+`referenceBlocks`. Stage the scripts the stages import: `node <plugin>/skills/stardust/scripts/stage.mjs spec diff dynamics deploy`.
 
 ## Stages
 

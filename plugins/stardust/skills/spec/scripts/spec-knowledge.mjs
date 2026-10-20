@@ -17,6 +17,7 @@ import { join } from 'node:path';
 import { CODED, arg, helpAndExit, loadConfig, loadSibling, log, readJSON, readJSONL, templateOf, urlKey, writeJSON, writeText } from './lib.mjs';
 import { evalRule, fillText, selectUrls, tokens } from './rules.mjs';
 import { CLASS_NAMES } from '#lib/taxonomy.mjs'; // the one copy of the class labels (dynamics-detect uses the same)
+import { deliveredUrl as edsPath, redirectKey } from '#lib/paths.mjs'; // the delivered URL of a source page: the one path contract
 
 helpAndExit(import.meta.url);
 
@@ -109,8 +110,8 @@ export function offVocabulary(features, taxonomy) {
 
 /** The latest recorded answer per question id, from judgement/answers.json. Pure. */
 /** A migration redirect needs its own entry when its path changes beyond dropping .html, an index name or a folder's
- *  trailing slash (one rule covers those); a change of case, characters or place does not. */
-export const needsEntry = (src, target) => { const k = (p) => String(p).replace(/\.html$/, '').replace(/\/index$/, '').replace(/\/$/, ''); return k(src) !== k(target) ? 1 : 0; };
+ *  trailing slash (one rule covers those — `#lib/paths.mjs` redirectKey); a change of case, characters or place does not. */
+export const needsEntry = (src, target) => (redirectKey(src) !== redirectKey(target) ? 1 : 0);
 /** The chapters of a spec's story a finding belongs to (reference/knowledge.md § findings.json). */
 export const CHAPTERS = ['start', 'pages', 'build', 'dynamic', 'risks', 'decide'];
 
@@ -122,8 +123,6 @@ export function latestAnswers(list) {
 
 async function main() {
   const cfg = loadConfig();
-  // the delivered URL of a source page: deploy's one path contract (../../deploy/scripts/eds-path.mjs)
-  const { deliveredUrl: edsPath } = await loadSibling('deploy', 'eds-path.mjs');
   const W = (...p) => cfg.w(...p); const J = (...p) => cfg.p('judgement', ...p); const OUT = (...p) => cfg.p('knowledge', ...p);
   const rum = readJSON(W('rum', 'rum.json'), { available: false });
   const views = rum.available ? rum.pages : {};

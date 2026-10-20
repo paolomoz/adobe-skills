@@ -42,6 +42,7 @@ import { spawn } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { siblingPath } from '#lib/resolve.mjs';
 
 const HELP = `gate-all — published-origin gate over every deployed page: pixel + height + clip + content (#125)
 
@@ -139,10 +140,10 @@ export function formatSummary(summary) {
 
 // ---- runner ---------------------------------------------------------------------------------------------
 const HERE = dirname(fileURLToPath(import.meta.url));
-const firstExisting = (cands) => cands.map((p) => resolve(HERE, p)).find((p) => existsSync(p));
 const STITCH = join(HERE, 'stitch-shot.mjs');
 const PIXEL = join(HERE, 'pixel-compare.mjs');
-const DIFF_DIR = firstExisting(['../../diff/scripts', '../diff']);
+// The diff skill's scripts dir (content-presence, clip-probe, unit-geometry), in whichever layout holds it (#lib/resolve.mjs).
+const DIFF_DIR = (() => { const p = siblingPath('diff', 'unit-geometry.mjs'); return p ? dirname(p) : null; })();
 const { unitsFor } = DIFF_DIR ? await import(pathToFileURL(join(DIFF_DIR, 'unit-geometry.mjs')).href) : { unitsFor: () => [] };
 const readJson = (p, d = null) => (existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) : d);
 
@@ -161,7 +162,7 @@ const lastLine = (s) => (s || '').trim().split('\n').filter(Boolean).pop() || ''
 async function main() {
   const opts = parseArgs(process.argv);
   if (!existsSync(opts.state)) { console.error(`gate-all: ${opts.state} not found — run from the project root or pass --state`); process.exit(1); }
-  if ((opts.clip || opts.content) && !DIFF_DIR) { console.error('gate-all: the diff skill\'s scripts dir was not found next to this one (../../diff/scripts or ../diff) — copy it (replica SKILL.md § Setup) or pass --no-probes'); process.exit(1); }
+  if ((opts.clip || opts.content) && !DIFF_DIR) { console.error('gate-all: the diff skill\'s scripts were not found beside this one — stage them (node <plugin>/skills/stardust/scripts/stage.mjs replica diff) or pass --no-probes'); process.exit(1); }
   const state = readJson(opts.state);
   let pages = opts.stage === 'prototype'
     ? (state.pages || []).filter((p) => p.prototypePath && p.url).map((p) => ({ ...p, liveUrl: `${opts.protoBase || 'http://localhost:8791'}/${basename(p.prototypePath)}` }))

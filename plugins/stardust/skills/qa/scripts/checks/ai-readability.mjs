@@ -14,6 +14,7 @@
  */
 import { loadPlaywright, finding, originAuthFor, attachOriginAuth, arg } from '../lib.mjs';
 import { loadSibling } from '#lib/resolve.mjs';
+import { AI_EXCLUDE_DEFAULT } from '#lib/kinds.mjs';
 
 // deploy's instrument, found in the plugin tree or a project copy (a static ../../../deploy/scripts/ path resolves only in the plugin tree)
 const { scorePage } = await loadSibling('deploy', 'ai-readability.mjs');
@@ -25,7 +26,7 @@ export async function run(ctx) {
   const browser = await chromium.launch();
   const auth = originAuthFor(base);
   const headers = auth ? { authorization: auth } : {};
-  const excludeBlocks = (arg('ai-exclude-blocks', 'client-app,widget') || '').split(',').map((s) => s.trim()).filter(Boolean);
+  const excludeBlocks = (arg('ai-exclude-blocks', AI_EXCLUDE_DEFAULT.join(',')) || '').split(',').map((s) => s.trim()).filter(Boolean);
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, extraHTTPHeaders: headers });
   await attachOriginAuth(context);
   const summary = [];

@@ -63,19 +63,12 @@ eyeballing.
    devDependencies otherwise land in the repo the skills push. Run every
    probe from the project root: ESM resolves `playwright` from the script's
    own location.
-4. Copy scripts into the project and run them from there, not from the
-   plugin: this skill's whole `scripts/` dir to
-   `stardust/scripts/replica/`, the master skill's `../stardust/scripts/`
-   (ledger.mjs, state.mjs) to `stardust/scripts/stardust/`, the migrate
-   skill's `../migrate/scripts/` (migrate.mjs) to `stardust/scripts/migrate/`,
-   AND the whole
-   `../diff/scripts/` dir to `stardust/scripts/diff/` (the diff scripts
-   import diff-profiles.mjs, and ALL live-target hardening — including
-   stitch-shot's — lives in its live-session.mjs; stitch-shot resolves it
-   from `stardust/scripts/diff/` next to `stardust/scripts/replica/`, so
-   keep the two dirs siblings). Never copy into the project-root
-   `scripts/` — that is the EDS boilerplate's directory (master skill
-   § Artifacts, the write boundary).
+4. Stage the scripts into the project and run the copies, never plugin
+   paths: `node <plugin>/skills/stardust/scripts/stage.mjs replica stardust
+   migrate diff` writes `stardust/scripts/<skill>/` plus the shared `lib/`
+   (every probe's live-target hardening is the diff skill's live-session.mjs,
+   found there by `#lib/resolve.mjs`) — never into the project-root `scripts/`,
+   the EDS boilerplate's directory (master skill § Artifacts, the write boundary).
 
 **Reading and inspection discipline — the context is the budget**
 (`reference/reading-discipline.md`, read it once at Setup). Every byte a

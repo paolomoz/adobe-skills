@@ -14,7 +14,7 @@
  * stitch on the other) manufactures pixel diffs that aren't there.
  *
  * Hardening baked in (each one is a recorded false-measurement trap; the
- * live-navigation pieces live in the shared ../../diff/scripts/live-session.mjs):
+ * live-navigation pieces live in the diff skill's shared live-session.mjs):
  *   - real-Chrome UA + the STANDARD REQUEST HEADERS by default: the default
  *     HeadlessChrome UA gets a Cloudflare managed challenge on many live
  *     sites, and UA alone still 403s on Akamai (F-R1) — the standard headers
@@ -84,22 +84,12 @@
 /* standalone dev tool: sequential page ops use awaited loops by design */
 import { chromium } from 'playwright';
 import { PNG } from 'pngjs';
-import { writeFileSync, mkdirSync, existsSync } from 'fs';
-import { dirname, resolve as resolvePath } from 'path';
-import { fileURLToPath, pathToFileURL } from 'url';
+import { writeFileSync, mkdirSync } from 'fs';
+import { dirname } from 'path';
+import { loadSibling } from '#lib/resolve.mjs';
 
-// live-session.mjs lives in the diff skill's scripts dir. Two layouts exist:
-// the plugin tree (skills/replica/scripts ↔ skills/diff/scripts) and the
-// documented project copy (scripts/replica ↔ scripts/diff) — resolve either,
-// so a project re-copy can't silently sever the shared hardening.
-const HERE = dirname(fileURLToPath(import.meta.url));
-const LIVE_SESSION = ['../../diff/scripts/live-session.mjs', '../diff/live-session.mjs']
-  .map((p) => resolvePath(HERE, p)).find((p) => existsSync(p));
-if (!LIVE_SESSION) {
-  console.error('stitch-shot error: live-session.mjs not found (looked in ../../diff/scripts/ and ../diff/). Copy the diff skill\'s scripts dir alongside this one (replica SKILL.md § Setup).');
-  process.exit(1);
-}
-const { REAL_CHROME_UA, isLiveHttpUrl, launchStealthHeaded, newLiveContext, gotoLive, dismissOverlays } = await import(pathToFileURL(LIVE_SESSION).href);
+// live-session.mjs is the diff skill's; #lib/resolve.mjs finds it in either layout (plugin tree or stage.mjs copy).
+const { REAL_CHROME_UA, isLiveHttpUrl, launchStealthHeaded, newLiveContext, gotoLive, dismissOverlays } = await loadSibling('diff', 'live-session.mjs').catch((e) => { console.error(`stitch-shot error: ${e.message}`); process.exit(1); });
 
 const HELP = `stitch-shot — scroll-and-stitch full-page screenshot (symmetric capture instrument)
 

@@ -11,8 +11,9 @@ script you touch — playwright scripts from a project copy, the plugin tree shi
   placeholders (`<site>`, `main > div.<cms-list>`). `evals/lint/site-names.mjs` fails otherwise;
   extend its allowlist only with a reason on the line.
 - **Every CLI script** answers `--help` before any I/O, has one `scripts-index.md` row and a
-  `scripts/test/<name>.test.mjs` whose pure part needs no browser; resolve sibling-skill imports
-  in both layouts (plugin tree, `stardust/scripts/<skill>/` copy).
+  `scripts/test/<name>.test.mjs` whose pure part needs no browser; import shared rules from
+  `skills/stardust/scripts/lib/` (`#lib/*`) and sibling scripts through `#lib/resolve.mjs`;
+  `stage.mjs` copies a skill set into a project.
 - **Harness-neutral text**, and docs name only paths that exist (the existing lints).
 - **Field learnings** = one anonymised CHANGELOG entry + the rule in the skill doc, with the next
   deploy-improvement number and the numbers it touches.

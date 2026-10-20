@@ -72,25 +72,12 @@
  * Exit: 0 captured, 2 setup/scope error,
  *       3 bot challenge / blocked live source (fail loud, never captured).
  */
-import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import { dirname, resolve as resolvePath } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { writeFileSync, mkdirSync } from 'node:fs';
 import { loadNormalize, IMG_VISIBLE } from './source-normalize.mjs';
+import { loadSibling } from '#lib/resolve.mjs';
 
-// live-session.mjs lives in the diff skill's scripts dir. Two layouts exist:
-// the plugin tree (skills/reskin/scripts ↔ skills/diff/scripts) and the
-// documented project copy (stardust/scripts/reskin ↔ stardust/scripts/diff)
-// — resolve either, so a project re-copy can't silently sever the shared
-// live-target hardening (F-G/F-R1).
-const HERE = dirname(fileURLToPath(import.meta.url));
-const LIVE_SESSION = ['../../diff/scripts/live-session.mjs', '../diff/live-session.mjs']
-  .map((p) => resolvePath(HERE, p)).find((p) => existsSync(p));
-if (!LIVE_SESSION) {
-  console.error('[capture-content] live-session.mjs not found (looked in ../../diff/scripts/ and ../diff/).');
-  console.error('Copy the diff skill\'s live-session.mjs alongside the reskin scripts (SKILL.md § Setup).');
-  process.exit(2);
-}
-const { isLiveHttpUrl, launchStealthHeaded, newLiveContext, gotoLive } = await import(pathToFileURL(LIVE_SESSION).href);
+// live-session.mjs is the diff skill's; #lib/resolve.mjs finds it in either layout (plugin tree or stage.mjs copy).
+const { isLiveHttpUrl, launchStealthHeaded, newLiveContext, gotoLive } = await loadSibling('diff', 'live-session.mjs').catch((e) => { console.error(`[capture-content] ${e.message}`); process.exit(2); });
 
 function parseArgs(argv) {
   const opts = { url: null, out: null, scope: 'main', normalize: null, ua: null, waitUntil: 'domcontentloaded', headed: false, locale: null };
@@ -130,8 +117,8 @@ if (opts.help || !opts.url || !opts.out) {
 let chromium;
 try { ({ chromium } = await import('playwright')); } catch {
   console.error('[capture-content] playwright not importable from this script\'s directory.');
-  console.error('Copy skills/reskin/scripts/* into the project (stardust/scripts/reskin/) and');
-  console.error('run: npm i -D playwright --no-save --legacy-peer-deps  (extract SKILL.md § Setup)');
+  console.error('Stage the scripts into the project — node <plugin>/skills/stardust/scripts/stage.mjs reskin diff — then, from the project root,');
+  console.error('npm i -D playwright --no-save --legacy-peer-deps (extract SKILL.md § Setup), and run the copy under stardust/scripts/reskin/.');
   process.exit(2);
 }
 

@@ -58,17 +58,11 @@
 /* eslint-disable import/no-extraneous-dependencies, import/extensions, no-await-in-loop, no-restricted-syntax, brace-style, object-curly-newline, max-len, no-plusplus, no-continue */
 import { chromium } from 'playwright';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
-import { dirname, resolve as resolvePath } from 'path';
-import { fileURLToPath, pathToFileURL } from 'url';
+import { dirname } from 'path';
+import { loadSibling } from '#lib/resolve.mjs';
 
-const HERE = dirname(fileURLToPath(import.meta.url));
-const LIVE_SESSION = ['../../diff/scripts/live-session.mjs', '../diff/live-session.mjs']
-  .map((p) => resolvePath(HERE, p)).find((p) => existsSync(p));
-if (!LIVE_SESSION) {
-  console.error('chrome-parity error: live-session.mjs not found (looked in ../../diff/scripts/ and ../diff/). Copy the diff skill\'s scripts dir alongside this one (replica SKILL.md § Setup).');
-  process.exit(1);
-}
-const { isLiveHttpUrl, launchStealthHeaded, newLiveContext, gotoLive, dismissOverlays, defaultWaitUntil } = await import(pathToFileURL(LIVE_SESSION).href);
+// live-session.mjs is the diff skill's; #lib/resolve.mjs finds it in either layout (plugin tree or stage.mjs copy).
+const { isLiveHttpUrl, launchStealthHeaded, newLiveContext, gotoLive, dismissOverlays, defaultWaitUntil } = await loadSibling('diff', 'live-session.mjs').catch((e) => { console.error(`chrome-parity error: ${e.message}`); process.exit(1); });
 
 const HELP = `chrome-parity — computed-style + rect diff of matched chrome elements (live vs build)
 

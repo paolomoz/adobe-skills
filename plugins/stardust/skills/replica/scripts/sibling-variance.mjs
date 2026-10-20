@@ -47,18 +47,10 @@
 
 /* eslint-disable import/no-extraneous-dependencies, import/extensions, no-await-in-loop, no-restricted-syntax, brace-style, object-curly-newline, max-len, no-plusplus, no-continue */
 import { chromium } from 'playwright';
-import { existsSync } from 'fs';
-import { dirname, resolve as resolvePath } from 'path';
-import { fileURLToPath, pathToFileURL } from 'url';
+import { loadSibling } from '#lib/resolve.mjs';
 
-const HERE = dirname(fileURLToPath(import.meta.url));
-const LIVE_SESSION = ['../../diff/scripts/live-session.mjs', '../diff/live-session.mjs']
-  .map((p) => resolvePath(HERE, p)).find((p) => existsSync(p));
-if (!LIVE_SESSION) {
-  console.error('sibling-variance error: live-session.mjs not found (looked in ../../diff/scripts/ and ../diff/). Copy the diff skill\'s scripts dir alongside this one (replica SKILL.md § Setup).');
-  process.exit(1);
-}
-const { isLiveHttpUrl, launchStealthHeaded, newLiveContext, gotoLive, dismissOverlays, defaultWaitUntil } = await import(pathToFileURL(LIVE_SESSION).href);
+// live-session.mjs is the diff skill's; #lib/resolve.mjs finds it in either layout (plugin tree or stage.mjs copy).
+const { isLiveHttpUrl, launchStealthHeaded, newLiveContext, gotoLive, dismissOverlays, defaultWaitUntil } = await loadSibling('diff', 'live-session.mjs').catch((e) => { console.error(`sibling-variance error: ${e.message}`); process.exit(1); });
 
 const HELP = `sibling-variance — diff template-defining computed values of live siblings against the archetype
 
