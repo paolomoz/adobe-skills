@@ -1,0 +1,9 @@
+{
+  "name": "stardust-plugin",
+  "private": true,
+  "type": "module",
+  "description": "Not an npm package: this file only gives every script under skills/*/scripts/ the `#lib/*` import that resolves to the shared library (skills/stardust/scripts/lib/README.md). stage.mjs writes the project-copy twin at stardust/scripts/package.json.",
+  "imports": {
+    "#lib/*": "./skills/stardust/scripts/lib/*"
+  }
+}

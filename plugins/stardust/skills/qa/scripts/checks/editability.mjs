@@ -23,9 +23,12 @@
 import {
   loadPlaywright, finding, pageUrl, pMap, arg,
 } from '../lib.mjs';
-import {
+import { loadSibling } from '#lib/resolve.mjs';
+
+// deploy's instrument, found in the plugin tree or a project copy (a static ../../../deploy/scripts/ path resolves only in the plugin tree)
+const {
   probeUrl, aggregate, readBlockExemptions, parseExemptList,
-} from '../../../deploy/scripts/ew-editability-probe.mjs';
+} = await loadSibling('deploy', 'ew-editability-probe.mjs');
 
 const VIEWPORT_WIDTH = 1440;
 const SETTLE_MS = 1500;

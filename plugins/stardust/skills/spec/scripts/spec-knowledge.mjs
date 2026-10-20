@@ -16,10 +16,9 @@ import { gunzipSync } from 'node:zlib';
 import { join } from 'node:path';
 import { CODED, arg, helpAndExit, loadConfig, loadSibling, log, readJSON, readJSONL, templateOf, urlKey, writeJSON, writeText } from './lib.mjs';
 import { evalRule, fillText, selectUrls, tokens } from './rules.mjs';
+import { CLASS_NAMES } from '#lib/taxonomy.mjs'; // the one copy of the class labels (dynamics-detect uses the same)
 
 helpAndExit(import.meta.url);
-
-const CLASS_NAMES = { L: 'listing', S: 'search', F: 'form', M: 'modal / interactive', V: 'media', T: 'tag / consent', A: 'API / settings', R: 'relationship', X: 'auth / commerce', I18N: 'locale', CR: 'client-rendered', D: 'data file' };
 
 export const band = (v) => (!v ? 'none' : v >= 10000 ? 'high' : v >= 1000 ? 'medium' : 'low');
 export const outcome = (r) => (r.error ? (/loop/.test(r.error) ? 'loop' : 'error') : r.external ? 'redirect-external' : [301, 302, 303, 307, 308].includes(r.status) ? (r.final_status === 200 ? 'redirect' : 'redirect-broken') : r.status === 200 ? 'page' : `http-${r.status}`);

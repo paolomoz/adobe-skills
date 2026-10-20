@@ -11,11 +11,13 @@
 //   imported          eds-path, localize-links, spec lib (templateOf, CODED), spec-knowledge (needsEntry), qa lib
 //                     (buildInventory, pageUrl, plainUrl), qa content (widgetLinks, blockNames), rollout lib, done-check,
 //                     seed-redirects, migrate, gate-evidence, block-roundtrip, dynamics lib
+//   shared library    skills/stardust/scripts/lib (Phase 1): the rollout rules that moved there are reached through it —
+//                     paths.mjs sidecarName/treePath/rosterPath/pathSlug (inventory.mjs), sitemapKey (assemble.mjs);
+//                     taxonomy.mjs CLASS_NAMES (dynamics-detect AND spec-knowledge: one copy, so the class-label rows left
+//                     KNOWN_DIVERGENCE deliberately); the column labels keep the consumer's name
 //   source-extracted  the verbatim function/literal text is read from the file and evaluated (module-private or in a
-//                     script that runs on import): inventory.mjs deliveredPath/urlToDeliveredPath/sidecarFor/pathToSlug,
-//                     assemble.mjs normPath, chrome-compare.mjs hrefKey, ai-readability.mjs isChrome, spec lib CHROME,
-//                     spec-knowledge k(), dynamics-detect / spec-knowledge CLASS_NAMES, davids-model-lint KEY_VALUE_BLOCKS,
-//                     spec-map kind literals
+//                     script that runs on import): chrome-compare.mjs hrefKey, ai-readability.mjs isChrome, spec lib CHROME,
+//                     spec-knowledge k(), davids-model-lint KEY_VALUE_BLOCKS, spec-map kind literals
 //   re-implemented    deploy-batch.mjs:161-162 webPath (two lines, source-pinned), qa routing.mjs:88 sampling filter
 //   spawned           rollout delivery-lint.mjs (--json) on a one-link page per href and on each --path
 // Source pins (`pin`) assert the extracted/re-implemented text is still in the file: when Phase 1 swaps an inline rule
@@ -28,7 +30,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -54,6 +56,8 @@ const migrate = await load('migrate/scripts/migrate.mjs');
 const gate = await load('replica/scripts/gate-evidence.mjs');
 const roundtrip = await load('deploy/scripts/block-roundtrip.mjs');
 const dynLib = await load('dynamics/scripts/lib.mjs');
+const libPaths = await load('stardust/scripts/lib/paths.mjs');
+const libTaxonomy = await load('stardust/scripts/lib/taxonomy.mjs');
 
 /** The verbatim source text matched by `re` (group 1), evaluated with `scope` in reach. */
 function fromSource(rel, re, scope = {}) {
@@ -64,13 +68,15 @@ function fromSource(rel, re, scope = {}) {
 }
 const pin = (rel, snippet) => assert.ok(src(rel).includes(snippet), `${rel} no longer contains the pinned source:\n  ${snippet}`);
 
-// rollout/scripts/inventory.mjs:90-95, 98-103, 106-113, 116-119 — runs on import
-const invSidecarFor = fromSource('rollout/scripts/inventory.mjs', /(function sidecarFor\(relHtml\) \{[\s\S]*?\n\})/, { dirname, basename, join });
-const invDeliveredPath = fromSource('rollout/scripts/inventory.mjs', /(function deliveredPath\(relHtml\) \{[\s\S]*?\n\})/);
-const invUrlToDeliveredPath = fromSource('rollout/scripts/inventory.mjs', /(function urlToDeliveredPath\(url\) \{[\s\S]*?\n\})/);
-const invPathToSlug = fromSource('rollout/scripts/inventory.mjs', /(function pathToSlug\(path\) \{[\s\S]*?\n\})/);
-// rollout/scripts/assemble.mjs:60-67 — runs on import
-const assembleNormPath = fromSource('rollout/scripts/assemble.mjs', /(function normPath\(p\) \{[\s\S]*?\n\})/);
+// rollout/scripts/inventory.mjs — its four path rules are #lib/paths.mjs variants (pinned import names)
+pin('rollout/scripts/inventory.mjs', "import { sidecarName as sidecarFor, treePath as deliveredPath, rosterPath as urlToDeliveredPath, pathSlug as pathToSlug } from '#lib/paths.mjs';");
+const invSidecarFor = (rel) => libPaths.sidecarName(rel);
+const invDeliveredPath = libPaths.treePath;
+const invUrlToDeliveredPath = libPaths.rosterPath;
+const invPathToSlug = libPaths.pathSlug;
+// rollout/scripts/assemble.mjs — normPath is #lib/paths.mjs sitemapKey
+pin('rollout/scripts/assemble.mjs', "import { sitemapKey as normPath } from '#lib/paths.mjs';");
+const assembleNormPath = libPaths.sitemapKey;
 // diff/scripts/chrome-compare.mjs:38-42 — module-private
 const chromeCompareHrefKey = fromSource('diff/scripts/chrome-compare.mjs', /const hrefKey = (\(h\) => \{[\s\S]*?\n\});/);
 // spec/scripts/spec-knowledge.mjs:114 — the k() inside needsEntry
@@ -276,9 +282,11 @@ OBSERVED.chromeSets = {
   aiReadabilityOnPaths: Object.fromEntries(PATHS.map((p) => [p, aiReadabilityIsChrome(p)])),
 };
 
-// 4. dynamics class labels
-const dynClassNames = fromSource('dynamics/scripts/dynamics-detect.mjs', /const CLASS_NAMES = (\{[^\n]*\});/);
-const specClassNames = fromSource('spec/scripts/spec-knowledge.mjs', /const CLASS_NAMES = (\{[^\n]*\});/);
+// 4. dynamics class labels — one copy (#lib/taxonomy.mjs) imported by both writers; the import lines are pinned
+pin('dynamics/scripts/dynamics-detect.mjs', "import { CLASS_NAMES } from '#lib/taxonomy.mjs';");
+pin('spec/scripts/spec-knowledge.mjs', "import { CLASS_NAMES } from '#lib/taxonomy.mjs';");
+const dynClassNames = libTaxonomy.CLASS_NAMES;
+const specClassNames = libTaxonomy.CLASS_NAMES;
 OBSERVED.classLabels = family('class-label', [...new Set([...dynLib.TAXONOMY.class, ...Object.keys(dynClassNames), ...Object.keys(specClassNames)])], {
   dynamics: { label: 'dynamics/scripts/dynamics-detect.mjs#CLASS_NAMES', fn: (k) => dynClassNames[k] ?? null },
   spec: { label: 'spec/scripts/spec-knowledge.mjs#CLASS_NAMES', fn: (k) => specClassNames[k] ?? null },
@@ -443,20 +451,20 @@ const EXPECTED = {
     "/A/B": {"type": "page", "pathSafety": "/a/b", "linkRules": []},
     "https://HOST.example/a/b.html?q": {"type": "page", "pathSafety": "https:/host.example/a/b.html?q", "linkRules": "not-root-relative"},
     "/widgets/search/site-search.html?q=docs": {"type": "page", "pathSafety": null, "linkRules": []},
-    "/widgets/search/site-search.htm": {"type": "page", "pathSafety": null, "linkRules": []},
+    "/widgets/search/site-search.htm": {"type": "page", "pathSafety": null, "linkRules": ["unknown-widget"]},
     "/nav": {"type": "fragment", "pathSafety": null, "linkRules": []},
     "/footer": {"type": "fragment", "pathSafety": null, "linkRules": []},
     "/fragments/x": {"type": "fragment", "pathSafety": null, "linkRules": []}
   },
   widgetStem: {
     "/widgets/search/site-search.html?q=docs": {"widgetStem": "site-search", "roundtripLinks": "site-search", "rolloutPageWidgets": "site-search", "migrateWidgetsIn": "site-search", "qaWidgetLinks": "site-search", "qaWidgetLinksSameSite": "site-search", "rolloutCodePath": "widgets/search/site-search.html", "qaWidgetPath": "/widgets/search/site-search.html", "reservedStem": false, "edsName": "site-search", "lintRules": []},
-    "/widgets/search/site-search.htm": {"widgetStem": "site-search", "roundtripLinks": "site-search", "rolloutPageWidgets": "site-search.htm", "migrateWidgetsIn": "site-search", "qaWidgetLinks": null, "qaWidgetLinksSameSite": null, "rolloutCodePath": "widgets/search/site-search.htm", "qaWidgetPath": null, "reservedStem": false, "edsName": "site-search", "lintRules": []},
+    "/widgets/search/site-search.htm": {"widgetStem": "site-search", "roundtripLinks": "site-search", "rolloutPageWidgets": "site-search", "migrateWidgetsIn": "site-search", "qaWidgetLinks": null, "qaWidgetLinksSameSite": null, "rolloutCodePath": "widgets/search/site-search.htm", "qaWidgetPath": null, "reservedStem": false, "edsName": "site-search", "lintRules": ["unknown-widget"]},
     "/widgets/a/results-wrapper.html": {"widgetStem": "results-wrapper", "roundtripLinks": "results-wrapper", "rolloutPageWidgets": "results-wrapper", "migrateWidgetsIn": "results-wrapper", "qaWidgetLinks": "results-wrapper", "qaWidgetLinksSameSite": "results-wrapper", "rolloutCodePath": "widgets/a/results-wrapper.html", "qaWidgetPath": "/widgets/a/results-wrapper.html", "reservedStem": true, "edsName": "results-wrapper-block", "lintRules": ["widget-name"]},
     "/widgets/a/widget.html": {"widgetStem": "widget", "roundtripLinks": "widget", "rolloutPageWidgets": "widget", "migrateWidgetsIn": "widget", "qaWidgetLinks": "widget", "qaWidgetLinksSameSite": "widget", "rolloutCodePath": "widgets/a/widget.html", "qaWidgetPath": "/widgets/a/widget.html", "reservedStem": true, "edsName": "blk-widget", "lintRules": ["widget-name"]},
-    "/widgets/x.HTML": {"widgetStem": "x", "roundtripLinks": "x", "rolloutPageWidgets": "x.HTML", "migrateWidgetsIn": "x", "qaWidgetLinks": "x", "qaWidgetLinksSameSite": "x", "rolloutCodePath": "widgets/x.HTML", "qaWidgetPath": "/widgets/x.HTML", "reservedStem": false, "edsName": "x", "lintRules": []},
+    "/widgets/x.HTML": {"widgetStem": "x", "roundtripLinks": "x", "rolloutPageWidgets": "x", "migrateWidgetsIn": "x", "qaWidgetLinks": "x", "qaWidgetLinksSameSite": "x", "rolloutCodePath": "widgets/x.HTML", "qaWidgetPath": "/widgets/x.HTML", "reservedStem": false, "edsName": "x", "lintRules": []},
     "https://partner.example/widgets/map/finder.html": {"widgetStem": "finder", "roundtripLinks": "finder", "rolloutPageWidgets": "finder", "migrateWidgetsIn": "finder", "qaWidgetLinks": "finder", "qaWidgetLinksSameSite": null, "rolloutCodePath": "widgets/map/finder.html", "qaWidgetPath": "/widgets/map/finder.html", "reservedStem": false, "edsName": "finder", "lintRules": "not-root-relative"},
-    "/a/b.html": {"widgetStem": null, "roundtripLinks": null, "rolloutPageWidgets": "b", "migrateWidgetsIn": "b", "qaWidgetLinks": null, "qaWidgetLinksSameSite": null, "rolloutCodePath": "a/b.html", "qaWidgetPath": null, "reservedStem": false, "edsName": "null", "lintRules": ["html-extension"]},
-    "/nav": {"widgetStem": null, "roundtripLinks": null, "rolloutPageWidgets": "nav", "migrateWidgetsIn": "nav", "qaWidgetLinks": null, "qaWidgetLinksSameSite": null, "rolloutCodePath": "nav", "qaWidgetPath": null, "reservedStem": false, "edsName": "null", "lintRules": []}
+    "/a/b.html": {"widgetStem": null, "roundtripLinks": null, "rolloutPageWidgets": null, "migrateWidgetsIn": "b", "qaWidgetLinks": null, "qaWidgetLinksSameSite": null, "rolloutCodePath": "a/b.html", "qaWidgetPath": null, "reservedStem": false, "edsName": "null", "lintRules": ["html-extension"]},
+    "/nav": {"widgetStem": null, "roundtripLinks": null, "rolloutPageWidgets": null, "migrateWidgetsIn": "nav", "qaWidgetLinks": null, "qaWidgetLinksSameSite": null, "rolloutCodePath": "nav", "qaWidgetPath": null, "reservedStem": false, "edsName": "null", "lintRules": []}
   },
   widgetMounts: {
     "twoLinks": {"roundtrip": [], "migrate": [], "qa": [{"name": "site-search", "href": "/widgets/search/site-search.html", "path": "/widgets/search/site-search.html"}]},
@@ -481,12 +489,12 @@ const EXPECTED = {
     "M": {"dynamics": "modal / interactive", "spec": "modal / interactive", "inTaxonomy": true},
     "V": {"dynamics": "media", "spec": "media", "inTaxonomy": true},
     "T": {"dynamics": "tag / consent", "spec": "tag / consent", "inTaxonomy": true},
-    "A": {"dynamics": "API / personalisation / settings", "spec": "API / settings", "inTaxonomy": true},
+    "A": {"dynamics": "API / personalisation / settings", "spec": "API / personalisation / settings", "inTaxonomy": true},
     "R": {"dynamics": "relationship", "spec": "relationship", "inTaxonomy": true},
     "X": {"dynamics": "auth / commerce", "spec": "auth / commerce", "inTaxonomy": true},
     "I18N": {"dynamics": "locale", "spec": "locale", "inTaxonomy": true},
     "CR": {"dynamics": "client-rendered", "spec": "client-rendered", "inTaxonomy": true},
-    "D": {"dynamics": "sheet / data file", "spec": "data file", "inTaxonomy": true}
+    "D": {"dynamics": "sheet / data file", "spec": "sheet / data file", "inTaxonomy": true}
   },
   metadataPair: {"davidsModelLint": ["metadata", "section-metadata"], "qaBlockNames": ["hero"]},
   kinds: {"specCoded": ["block", "dynamic", "widget"], "specMapHeader": ["block", "dynamic", "widget", "default", "metadata", "drop"], "specMapNestedKinds": ["block", "dynamic", "widget"], "specMapKindLiterals": ["block", "default", "drop", "metadata", "unmapped"], "rolloutSchema": ["chrome", "module", "section", "widget"], "rolloutKindOf": ["chrome", "module"], "rolloutDefaultContent": "default-content", "specMapDefaultBlock": "default-content"},
@@ -563,14 +571,10 @@ const KNOWN_DIVERGENCE = [
   {"concept": "da-document-path", "input": "/widgets/search/site-search.html?q=docs", "a": "deploy/scripts/eds-path.mjs#daPath (of deliveredUrl of /<file>) → \"/widgets/search/site-search\"", "b": "deploy/scripts/deploy-batch.mjs#walkHtml.webPath → \"/widgets/search/site-search.html?q=docs/index\""},
   {"concept": "da-document-path", "input": "/widgets/search/site-search.htm", "a": "deploy/scripts/eds-path.mjs#daPath (of deliveredUrl of /<file>) → \"/widgets/search/site-search\"", "b": "deploy/scripts/deploy-batch.mjs#walkHtml.webPath → \"/widgets/search/site-search.htm\""},
   {"concept": "sidecar", "input": "/widgets/search/site-search.htm", "a": "migrate/scripts/migrate.mjs#sidecarFor → \"widgets/search/site-search._meta.json\"", "b": "rollout/scripts/inventory.mjs#sidecarFor → \"widgets/search/site-search.htm._meta.json\""},
-  {"concept": "widget-stem", "input": "/widgets/search/site-search.htm", "a": "deploy/scripts/block-roundtrip.mjs#widgetStem → \"site-search\"", "b": "rollout/scripts/lib.mjs#pageWidgets.id → \"site-search.htm\""},
   {"concept": "widget-stem", "input": "/widgets/search/site-search.htm", "a": "deploy/scripts/block-roundtrip.mjs#widgetStem → \"site-search\"", "b": "qa/scripts/checks/content.mjs#widgetLinks.name (no base) → null"},
   {"concept": "widget-stem", "input": "/widgets/search/site-search.htm", "a": "deploy/scripts/block-roundtrip.mjs#widgetStem → \"site-search\"", "b": "qa/scripts/checks/content.mjs#widgetLinks.name (base https://site.example) → null"},
-  {"concept": "widget-stem", "input": "/widgets/x.HTML", "a": "deploy/scripts/block-roundtrip.mjs#widgetStem → \"x\"", "b": "rollout/scripts/lib.mjs#pageWidgets.id → \"x.HTML\""},
   {"concept": "widget-stem", "input": "https://partner.example/widgets/map/finder.html", "a": "deploy/scripts/block-roundtrip.mjs#widgetStem → \"finder\"", "b": "qa/scripts/checks/content.mjs#widgetLinks.name (base https://site.example) → null"},
-  {"concept": "widget-stem", "input": "/a/b.html", "a": "deploy/scripts/block-roundtrip.mjs#widgetStem → null", "b": "rollout/scripts/lib.mjs#pageWidgets.id → \"b\""},
   {"concept": "widget-stem", "input": "/a/b.html", "a": "deploy/scripts/block-roundtrip.mjs#widgetStem → null", "b": "migrate/scripts/migrate.mjs#widgetsIn.id → \"b\""},
-  {"concept": "widget-stem", "input": "/nav", "a": "deploy/scripts/block-roundtrip.mjs#widgetStem → null", "b": "rollout/scripts/lib.mjs#pageWidgets.id → \"nav\""},
   {"concept": "widget-stem", "input": "/nav", "a": "deploy/scripts/block-roundtrip.mjs#widgetStem → null", "b": "migrate/scripts/migrate.mjs#widgetsIn.id → \"nav\""},
   {"concept": "chrome-id", "input": "header", "a": "rollout/scripts/lib.mjs#kindOf → true", "b": "qa/scripts/lib.mjs#buildInventory.fragments default (of /<id>) → false"},
   {"concept": "chrome-id", "input": "header", "a": "rollout/scripts/lib.mjs#kindOf → true", "b": "rollout/scripts/delivery-lint.mjs#inferType (of /<id>) === fragment → false"},
@@ -578,8 +582,6 @@ const KNOWN_DIVERGENCE = [
   {"concept": "chrome-id", "input": "Header", "a": "rollout/scripts/lib.mjs#kindOf → true", "b": "spec/scripts/lib.mjs#genericRules.CHROME → false"},
   {"concept": "chrome-id", "input": "Header", "a": "rollout/scripts/lib.mjs#kindOf → true", "b": "qa/scripts/lib.mjs#buildInventory.fragments default (of /<id>) → false"},
   {"concept": "chrome-id", "input": "Header", "a": "rollout/scripts/lib.mjs#kindOf → true", "b": "rollout/scripts/delivery-lint.mjs#inferType (of /<id>) === fragment → false"},
-  {"concept": "class-label", "input": "A", "a": "dynamics/scripts/dynamics-detect.mjs#CLASS_NAMES → \"API / personalisation / settings\"", "b": "spec/scripts/spec-knowledge.mjs#CLASS_NAMES → \"API / settings\""},
-  {"concept": "class-label", "input": "D", "a": "dynamics/scripts/dynamics-detect.mjs#CLASS_NAMES → \"sheet / data file\"", "b": "spec/scripts/spec-knowledge.mjs#CLASS_NAMES → \"data file\""},
   {"concept": "chrome-set", "input": "header", "a": "rollout/scripts/lib.mjs#CHROME_IDS → \"header\"", "b": "qa/scripts/lib.mjs#buildInventory.fragments → absent"},
   {"concept": "kind-enum", "input": "default", "a": "spec/scripts/lib.mjs#CODED → absent", "b": "spec/scripts/spec-map.mjs#header kinds → \"default\""},
   {"concept": "kind-enum", "input": "metadata", "a": "spec/scripts/lib.mjs#CODED → absent", "b": "spec/scripts/spec-map.mjs#header kinds → \"metadata\""},
@@ -612,8 +614,13 @@ check('source pins of the metadata pair, the qa templates rule and build-harness
   pin('qa/scripts/checks/templates.mjs', "if (m[1] !== 'metadata' && m[1] !== 'section-metadata') names.add(m[1]);");
   pin('deploy/scripts/build-harness.mjs', "main.indexOf('class=\"metadata\"')");
   pin('deploy/scripts/build-harness.mjs', 'section-metadata(?:\\s[^"\']*)?["\']/gi');
-  pin('rollout/scripts/delivery-lint.mjs', "if (/^\\/widgets\\/.+\\.html$/i.test(bare)) {");
-  pin('rollout/scripts/delivery-lint.mjs', "const stem = bare.replace(/^.*\\//, '').replace(/\\.html$/i, '');");
+  pin('rollout/scripts/delivery-lint.mjs', "import { widgetStem, widgetCodePath } from '#lib/names.mjs';");
+  pin('rollout/scripts/delivery-lint.mjs', 'const stem = widgetStem(bare);');
+  pin('rollout/scripts/delivery-lint.mjs', "import { pathKey, safePath } from '#lib/paths.mjs';");
+  pin('rollout/scripts/delivery-lint.mjs', 'const type = TYPE || documentKind(DAPATH);');
+  pin('rollout/scripts/lib.mjs', "export { RESERVED, edsName, reservedStem, widgetCodePath, pageWidgets } from '#lib/names.mjs';");
+  pin('rollout/scripts/lib.mjs', "export { CHROME_IDS, kindOf, DEFAULT_CONTENT } from '#lib/kinds.mjs';");
+  pin('deploy/scripts/eds-path.mjs', "export { deliveredUrl, daPath, pathKey } from '#lib/paths.mjs';");
   pin('qa/scripts/checks/content.mjs', "if (!/^\\/widgets\\/.+\\.html$/i.test(path) || seen.has(path)) continue;");
   pin('deploy/scripts/ai-readability.mjs', "'--exclude-blocks', 'client-app,widget'");
 });

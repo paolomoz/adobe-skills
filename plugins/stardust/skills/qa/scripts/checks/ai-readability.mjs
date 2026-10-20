@@ -13,7 +13,10 @@
  * Evidence carries the top blocks by DOM-only words so the fix lands on the right block.
  */
 import { loadPlaywright, finding, originAuthFor, attachOriginAuth, arg } from '../lib.mjs';
-import { scorePage } from '../../../deploy/scripts/ai-readability.mjs';
+import { loadSibling } from '#lib/resolve.mjs';
+
+// deploy's instrument, found in the plugin tree or a project copy (a static ../../../deploy/scripts/ path resolves only in the plugin tree)
+const { scorePage } = await loadSibling('deploy', 'ai-readability.mjs');
 
 export async function run(ctx) {
   const { base, inventory } = ctx;

@@ -23,6 +23,7 @@
 /* eslint-disable no-await-in-loop, no-restricted-syntax, max-len */
 import { readdirSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { CLASS_NAMES } from '#lib/taxonomy.mjs';
 import {
   arg, flag, list, readJSON, writeJSON, writeText, provenance, loadPlaywright, vendorFor, registrable, sameSite, pathPattern, settlePage, slug,
 } from './lib.mjs';
@@ -47,7 +48,6 @@ if (!URLS.length && arg('from-state')) {
 }
 if (!URLS.length) { console.error('usage: dynamics-detect.mjs --urls <url,…> | --from-state stardust/state.json [--out dir]'); process.exit(2); }
 
-const CLASS_NAMES = { L: 'listing', S: 'search', F: 'form', M: 'modal / interactive', V: 'media', T: 'tag / consent', A: 'API / personalisation / settings', R: 'relationship', X: 'auth / commerce', I18N: 'locale', CR: 'client-rendered', D: 'sheet / data file' };
 const API_PATH = /\/(api|graphql|ajax|json|search|autocomplete|typeahead|suggest|client\/|webservices|_next\/data|wp-json|\.rest|odata)/i;
 
 /* ------------------------------------------------------ in-page capture -- */
