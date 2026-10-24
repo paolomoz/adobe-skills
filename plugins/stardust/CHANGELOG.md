@@ -4,6 +4,40 @@ This file starts at 0.14.0. Prior versions (0.3.0 – 0.13.1) are documented in
 git history only (plus the branch-scoped notes in
 `CHANGELOG-redesign-adobecom.md` and `CHANGELOG-delivery-media-fidelity.md`).
 
+## 0.37.1 — block weight: lifted cascades pruned against the delivered pages, look carry measured (#142b)
+
+Field learning (the same recorded replica rollout, 93 delivered pages): after 0.37.0 put every look of a block in one
+`<b>.{js,css}`, gz block code per page went from the variant host's median 43.6 / p90 65.4 KB to 70.9 / 116.3 KB with
+requests 30.5 → 17.0. Measured on 186 snapshots (93 pages × 2 widths), the CSS a page can match was 13.1 KB median of
+37.6 KB loaded. Duplication was not the cost: 98 rules matched no delivered page and 1,880 earlier rules were exact
+copies a later rule overrides, yet removing them saved 5 % gz (gzip already folds near copies). The cost is look carry:
+each page loads every sibling look's cascade and decorate — an article body's comparison look (8.1 KB gz of its own CSS)
+rode along on 36 pages that never show it.
+
+- **The rule** (`deploy/SKILL.md` Step 2 § Block, variant or merge — Weight): every page downloads every look of its
+  blocks; at fan-in measure block code per page and each look's carry, prune lifted cascades to the rules a delivered
+  page can match; a heavy look that never shares a page with its siblings and whose keyed rows mean other things is its
+  own block; decorative SVG inlined in decorate JS becomes a file under the block.
+- **`deploy/scripts/css-coverage.mjs`** (new): `snapshot` stores each page × width's decorated DOM and the block files
+  it loaded (a 429 burst retried with backoff, never stored); `match` tests every block selector, relaxed, against the
+  snapshots offline (states, pseudo-elements, `:not()`, attributes, JS-toggled classes, classes named in JS but never
+  rendered, compounds assigned next to a free `${…}`, author-addable elements all widen the match) and prints block code
+  per page (median/p90), the CSS matching the page and the look carry table; `prune` rewrites the sheets (dead selectors,
+  emptied rules and groups, exact duplicate declarations, an earlier rule a later identical selector and condition fully
+  restates) and refuses a sheet changed since `match`.
+- **Field run** (the same project): prune over 40 sheets (gz 143.2 → 135.9 KB in total); the article body's tool and
+  comparison looks promoted to their own blocks (different keyed rows, never on one page with the post looks); the
+  partner card's 25 KB inline pattern SVG moved to a file. Per page: median 70.9 → 66.3, p90 116.3 → 82.2 KB, requests
+  17.0 = 17.0. A/B render (same served HTML, old vs new code): 93/93 identical at the wide width, 89 + 4 sub-0.1 %
+  decorative-pattern rows at the narrow one. Gate of record (tiered, published origin, both widths): delivered 93/93 — 75 + 18 overrides and 80 + 13, as before; no row worse (one strict flip at the wide width is the documented marquee HIDDEN 2). The median page type (a feature / tool landing family) still carries
+  collection-pattern looks of cards, columns, logos and the CTA banner (same model and author intent: § New block does
+  not apply); the variant-host median needs either those promotions or a loader — left to the owner, the carry table
+  lists the candidates.
+- A stale #142 rename surfaced as dead rules (a header logo rule keyed on a pre-rename variant class had not applied
+  since the rename): the prune report is also a rename audit.
+- Tests: `test/css-coverage.test.mjs` (scan, relaxation, JS tokens, prune, quantiles). Prose delta −16 words (the
+  restated wait discipline in Step 7 and the superseded archetype-prefixing naming text folded).
+
 ## 0.37.0 — block or variant: a measured boundary, a block audit, standard EDS blocks, claimed names (#142)
 
 Field learning (a recorded replica rollout, 93 delivered pages, 5–9 parallel delivery units): to keep units off each other's
