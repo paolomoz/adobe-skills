@@ -244,5 +244,33 @@ await check('--gate writes delivery.gate from a gate-all summary; a failing veri
   assert.equal(bad.code, 1, 'a file without rows[] is refused');
 });
 
+await check('--claim (#142): a new block / look is claimed, a second claim reuses it, a unit- or template-led name is refused, blocks.mjs keeps claims', async () => {
+  const { proj, out } = fixture();
+  let r = await run(['--claim', 'semrush-cta/button', '--unit', 'cl-a'], proj);
+  assert.equal(r.code, 0, r.err); assert.match(r.out, /claimed semrush-cta\/button for cl-a/);
+  const [x, y] = await Promise.all([run(['--claim', 'hero/dark', '--unit', 'cl-a'], proj), run(['--claim', 'hero/dark', '--unit', 'cl-b'], proj)]);
+  assert.deepEqual([x.out, y.out].map((o) => o.split(' ')[0]).sort(), ['claimed', 'reuse'], 'two units claiming one look at once: one claims, one reuses');
+  r = await run(['--claim', 'semrush-cta/button', '--unit', 'cl-b'], proj);
+  assert.match(r.out, /^reuse semrush-cta\/button \(claimed by cl-a\)/);
+  for (const bad of ['hero/cl-hero', 'hero/detail-dark', 'hero/tv2-dark', 'u2-hero']) {
+    r = await run(['--claim', bad, '--unit', 'cl'], proj);
+    assert.equal(r.code, 1, `${bad} must be refused`); assert.match(r.err, /named after a unit, page or template/);
+  }
+  r = await run(['--claim', 'detail-bio', '--unit', 'cl'], proj);
+  assert.equal(r.code, 0, 'a block may share a template word (author-bio)');
+  r = await run(['--claim', 'hero/detail-dark', '--unit', 'cl', '--allow-name', 'the source calls it so'], proj);
+  assert.equal(r.code, 0, r.err);
+  const doc = JSON.parse(readFileSync(join(out, 'coverage', 'blocks.json'), 'utf8'));
+  const hero = doc.blocks.find((b) => b.id === 'hero');
+  assert.deepEqual(hero.variants.map((v) => v.name).sort(), ['dark', 'detail-dark']);
+  assert.equal(doc.blocks.find((b) => b.id === 'semrush-cta').claimedBy, 'cl-a');
+  writeFileSync(join(out, 'coverage', 'pages.json'), JSON.stringify({ pages: [{ slug: 'p', templateId: 'detail', blocks: ['hero'] }] }));
+  r = await runScript(BLOCKS_SCRIPT, ['--out', out], proj);
+  assert.equal(r.code, 0, r.err);
+  const re = JSON.parse(readFileSync(join(out, 'coverage', 'blocks.json'), 'utf8'));
+  assert.ok(re.blocks.find((b) => b.id === 'semrush-cta'), 'a claimed block no page uses yet survives the re-derive');
+  assert.equal(re.blocks.find((b) => b.id === 'hero').variants.length, 2, 'claimed looks survive the re-derive');
+});
+
 console.log(failed ? `update-coverage: ${failed} check(s) failed` : 'update-coverage: all checks passed');
 process.exit(failed ? 1 : 0);

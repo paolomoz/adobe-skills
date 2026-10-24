@@ -14,6 +14,13 @@
  *   `failed` (error `gate: <reasons>`), a passing one out of that failure back to `deployed`; verify.mjs
  *   never marks a page `verified` while its `delivery.gate.pass` is false (#125 — completion derives
  *   from one place: a page the pixel table failed cannot read as verified).
+ * Claim:  node update-coverage.mjs --claim <block>[/<look>] --unit <id> [--allow-name <reason>]
+ *   before a unit creates a block or a look (variant class), it claims the name in blocks.json
+ *   (#142 — deploy SKILL.md Step 2 § Block, variant or merge). An existing block / look prints
+ *   `reuse` (exit 0: build on it, never a copy); a new one is recorded `claimed` with the unit in
+ *   `claimedBy` (a block row is created when none exists). A name led by the unit id or a digit
+ *   segment — for a look also a template id's first word — is refused (exit 1): name it after the
+ *   look or role; `--allow-name <reason>` records an exception.
  * New:    node update-coverage.mjs --new <slug> --path </delivered/path> --template <id> --origin <origin> [--title <t>] [--status <s>]
  *   page  <status>: pending | converting | deployed | verified | stale | failed
  *   block <status>: pending | converted | deployed | verified | failed
@@ -166,6 +173,42 @@ if (newSlug) {
   process.exit(0);
 }
 
+// --- Claim (#142): a block or look name is reserved before it is built ---------------
+const claim = arg('claim', null);
+if (claim) {
+  const unit = arg('unit', null);
+  const [blockName, look] = claim.split('/');
+  if (!unit || !blockName) { console.error('usage: update-coverage.mjs --claim <block>[/<look>] --unit <id>'); process.exit(2); }
+  const allow = arg('allow-name', null);
+  const tDoc = readJSON(templatesPath, { templates: [] }) || { templates: [] };
+  const unitWords = new Set([unit, unit.split('-')[0]]);
+  const templateWords = new Set((tDoc.templates || []).map((t) => String(t.id).split('-')[0]));
+  // a block or look led by the unit or a digit segment; a LOOK also by a template's first word
+  // (a block may share a content word with a page template: author-bio, newsletter-signup)
+  const scoped = (name, isLook) => { const lead = name.split('-')[0]; return name.includes('-') && (unitWords.has(lead) || /\d/.test(lead) || (isLook && templateWords.has(lead))); };
+  const bad = scoped(blockName, false) ? blockName : (look && scoped(look, true) ? look : null);
+  if (bad && !allow) { console.error(`rollout: "${bad}" is named after a unit, page or template — name the look or role (or --allow-name <reason>)`); process.exit(1); }
+  const doc = readJSON(blocksPath, null) || { _provenance: { writtenBy: 'stardust:rollout/update-coverage', writtenAt: now, stardustVersion: '0.0.0' }, blocks: [] };
+  let b = (doc.blocks || []).find((x) => x.id === blockName || (x.delivery && x.delivery.edsBlockName === blockName));
+  let verb = 'reuse';
+  if (!b) {
+    b = { id: blockName, label: blockName, kind: 'module', signature: `claim:${blockName}`, source: null, usedByTemplates: [], usedByPages: [], instanceCount: 0, delivery: { status: 'pending', edsBlockName: blockName, blockPath: `blocks/${blockName}/`, convertedAt: null }, claimedBy: unit };
+    doc.blocks.push(b); doc.blocks.sort((x, y) => x.id.localeCompare(y.id)); verb = 'claimed';
+  }
+  let target = b; let what = blockName;
+  if (look) {
+    b.variants = b.variants || [];
+    target = b.variants.find((v) => v.name === look);
+    what = `${blockName}/${look}`;
+    if (target) verb = 'reuse';
+    else { target = { name: look, claimedBy: unit, claimedAt: now, ...(allow ? { allowName: allow } : {}) }; b.variants.push(target); verb = 'claimed'; }
+  }
+  doc.generatedAt = now;
+  writeJSON(blocksPath, doc);
+  console.log(`${verb} ${what}${verb === 'reuse' ? ` (claimed by ${target.claimedBy || 'the ledger'})` : ` for ${unit}`}`);
+  process.exit(0);
+}
+
 if (blockId) {
   const STATUSES = ['pending', 'converted', 'deployed', 'verified', 'failed'];
   if (!status || !STATUSES.includes(status)) { console.error(`block status must be one of ${STATUSES.join('|')}`); process.exit(2); }
@@ -215,6 +258,7 @@ if (!slug || !status || !PAGE_STATUSES.includes(status)) {
   console.error(`usage: update-coverage.mjs <slug> --status <${PAGE_STATUSES.join('|')}> [--url <u>] [--error <m>]`);
   console.error('   or: update-coverage.mjs --block <id> --status <pending|converted|deployed|verified|failed> [--eds-name <n>]');
   console.error('   or: update-coverage.mjs --gate stardust/replica/gates/all-<w>/summary.json');
+  console.error('   or: update-coverage.mjs --claim <block>[/<look>] --unit <id> [--allow-name <reason>]');
   console.error('   or: update-coverage.mjs --new <slug> --path </path> --template <id> --origin <origin> [--title <t>] [--status <s>]');
   process.exit(2);
 }

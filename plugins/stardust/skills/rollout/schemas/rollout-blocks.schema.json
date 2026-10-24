@@ -45,6 +45,22 @@
         "usedByTemplates": { "type": "array", "items": { "type": "string" } },
         "usedByPages": { "type": "array", "items": { "type": "string" } },
         "instanceCount": { "type": "integer", "minimum": 0, "description": "How many page instances deploy this block." },
+        "claimedBy": { "type": "string", "description": "The unit that claimed this block name before building it (#142, update-coverage --claim)." },
+        "variants": {
+          "type": "array",
+          "description": "Looks (variant classes) claimed on this block (#142): one entry per look, named after the look or role.",
+          "items": {
+            "type": "object",
+            "required": ["name"],
+            "additionalProperties": false,
+            "properties": {
+              "name": { "type": "string" },
+              "claimedBy": { "type": "string" },
+              "claimedAt": { "type": "string", "format": "date-time" },
+              "allowName": { "type": "string", "description": "Recorded reason for a name the scope check refused." }
+            }
+          }
+        },
         "delivery": {
           "type": "object",
           "required": ["status"],

@@ -88,8 +88,13 @@ const blocks = [...agg.entries()].map(([id, a]) => {
     usedByPages: [...new Set(a.pages)].sort(),
     instanceCount: a.count,
     delivery,
+    ...(p && p.variants ? { variants: p.variants } : {}),
+    ...(p && p.claimedBy ? { claimedBy: p.claimedBy } : {}),
   };
-}).sort((x, y) => x.id.localeCompare(y.id));
+});
+// Claimed names (#142, update-coverage --claim) survive a re-derive until a page uses them.
+for (const [id, p] of prior) if (!agg.has(id) && String(p.signature || '').startsWith('claim:')) blocks.push(p);
+blocks.sort((x, y) => x.id.localeCompare(y.id));
 
 writeJSON(blocksPath, {
   _provenance: { writtenBy: 'stardust:rollout/blocks', writtenAt: now, readArtifacts: [join(OUT, 'coverage', 'pages.json')], stardustVersion: STARDUST_VERSION },

@@ -4,6 +4,48 @@ This file starts at 0.14.0. Prior versions (0.3.0 – 0.13.1) are documented in
 git history only (plus the branch-scoped notes in
 `CHANGELOG-redesign-adobecom.md` and `CHANGELOG-delivery-media-fidelity.md`).
 
+## 0.37.0 — block or variant: a measured boundary, a block audit, standard EDS blocks, claimed names (#142)
+
+Field learning (a recorded replica rollout, 93 delivered pages, 5–9 parallel delivery units): to keep units off each other's
+files every planned block became a "variant host" (`blocks/<b>/<b>.js` importing `variants/<v>.{css,js}` by the
+instance's first class) and each unit added variants under its own prefix — 107 variants on 27 blocks: a hero with 11, a
+CTA banner with 16 (one partner card ×6 under six unit names), an article body with 10 that held three content models.
+Names carried the unit (`u1-`, `u2-`), the page or the template, not the look; some "variants" were a different content
+model or behaviour (a search card with a GET form inside the CTA banner; a guide chapter layout inside the article body).
+The rule "a difference becomes a variant, never a per-page block fork" had been read as "never a new block".
+
+- **The rule** (contract — `deploy/SKILL.md` Step 2 § Block, variant or merge; pointers: § The one rule, handoff-contract
+  § 1 row 1, `migrate/reference/fidelity-tiers.md` § Sibling variance probe): variant = same content model + same
+  decorate skeleton, a CSS or closed-keyword difference, named after the look or role; new block = different model,
+  behaviour or author intent; merge = matching model and skeleton and the same rendering on every page that carried
+  either. Runtime: standard EDS (one `<b>.{js,css}`, looks as classes). Units claim names before building.
+- **`rollout/scripts/block-audit.mjs`** (new): per block × variant the content-model signature from the DA documents
+  (cell roles per column, repeated rows collapsed; column-free for data tables), the decorate skeleton (decorate run in
+  linkedom, tag paths + the interactive elements it builds), CSS evidence (property set, unscoped rules, tokens with the
+  block/variant classes normalised, `:is()`-aware selector split), usage and the `extends` chain; families by model and
+  behaviour → PROMOTE, near-identical sheets inside a family → MERGE, scope-led names (a lead word in ≥ 3 blocks or with
+  a digit) → RENAME, else KEEP; per page the block-code requests of a variant host vs standard EDS. JSON + a table.
+- **`update-coverage.mjs --claim <block>[/<look>] --unit <id>`** (new form, under the coverage lock): a new name is
+  recorded with `claimedBy`, an existing one answers `reuse`, a name led by the unit id, a template's first word or a
+  digit segment is refused (`--allow-name <reason>` records an exception). `blocks.json` gains `claimedBy` and
+  `variants[]` (schema); `blocks.mjs` keeps claims across a re-derive.
+- **Field run** (the same project): audit before — 27 blocks, 107 variants: merge 7 · promote 24 · rename 69 · keep 7.
+  Rebuilt by a generator from the pre-change tree (one file per block, each look's decorate in its own closure, a
+  dispatcher on the first look class): 36 content blocks (12 promoted: guide chapter, prose column, category cards,
+  showcase, split hero, chart band, e-mail signup, platform banner, partner button card, search-form card, testimonial,
+  compare grid), 88 looks; 14 merges kept — each only after an A/B render (same served HTML, old code vs new code +
+  renamed classes, both widths, pixelmatch) showed every affected page identical; 7 refused (same-looking pairs from
+  separately lifted cascades rendered differently: a heading scale, card spacing, a decorate that duplicated a logo).
+  Audit after: merge 0 · promote 0 · rename 0. A/B over 93 pages × 2 widths: 93/93 identical. Block-code requests per
+  page 30.5 → 17.0 (one serial round trip less per block); gz block code 46.6 → 79.5 KB per page — every look ships with
+  its block and the largest looks are whole lifted cascades (one article body: 206 KB raw / 24 KB gz); a CSS-per-look
+  split costed 21.4 requests / 56.2 KB and keeps the waterfall. The importer re-emitted all 81 template pages: content
+  count 81/81, structural compare 81/81 same. Gate of record (tiered, published origin): delivered 93/93 at both widths, no
+  row worse than before (strict PASS 73 → 75 at the wide width, 80 = 80 at the narrow). A rename also reaches the gate's
+  served-side unit declarations: the first run failed 18 rows on one stale `.<block>.<old-variant>` selector there.
+- Tests: `test/block-audit.test.mjs` (new), `test/update-coverage.test.mjs` (claim, concurrent claim, refusal, re-derive).
+  Prose delta −9 words (the naming-question examples, a twice-told anecdote and a watchdog anecdote folded).
+
 ## 0.36.0 — the all-pages gate at template scale: one load per side, served pages shot decorated, siblings tiered (#141)
 
 Field learning (a recorded replica rollout, 93 delivered pages, 8 templates): the published-origin gate, not delivery,

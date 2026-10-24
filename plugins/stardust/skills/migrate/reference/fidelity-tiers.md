@@ -57,9 +57,9 @@ Reading it: **every delta is first-class work, budgeted before the clone,
 not an edge case.** A hero height/scrim delta → a hero VARIANT class
 (`hero compact`, `hero scrim-inverted`); a second bullet mechanism → a list
 variant; a different terms shape → the terms block handles both shapes.
-Emit the variant on the sibling's generated content — the block stays
-generic (deploy SKILL.md § The one rule → same-pattern sections collapse into
-one block + variant classes); never fork a block per page. Record the probe's
+Emit the variant on the sibling's generated content — whether a delta is a
+variant, a new block or a merge is deploy SKILL.md Step 2 § Block, variant or
+merge (#142); never fork a block per page. Record the probe's
 JSON next to the fan-out brief and list the variants in each sibling's
 `_meta.json` `variants[]`. The probe is read-only evidence — it never edits
 the clone — and it costs one live navigation per sibling, so run a
