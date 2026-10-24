@@ -21,12 +21,9 @@ trade so a reviewer can see, per page, what was and wasn't checked.
 | **thin** | unique (graceful) | delivery-lint + media-reconcile + a declared `contentGap`. Renders metadata + hero + whatever real content exists (e.g. a PDF link). No fabricated filler. | Pages with little/no body content (PDF-only, redirect stubs, bodyless landing). |
 
 The point of the table: **archetype is craft-gated once per template, deployed and gated at the
-published origin BEFORE its siblings render (#126); siblings inherit that proven structure and
-encoder and only re-check the things that vary per page (content + media + the delivery contract
-+ their own gate row after PUT).** That keeps breadth affordable
-without dropping to zero gates. Make sibling-clone the path of least resistance —
-the reflex for "page N of an established template" should be *fork the archetype*,
-never *re-author from scratch*.
+published origin BEFORE its siblings render (#126); siblings reuse that proven structure and the
+template's project importer (`../../replica/reference/handoff-contract.md` § 1 row 2, #140) and
+re-check only what varies per page.**
 
 ## Sibling variance probe (template constancy is measured, not assumed)
 

@@ -67,7 +67,7 @@ eyeballing.
    plugin: this skill's whole `scripts/` dir to
    `stardust/scripts/replica/`, the master skill's `../stardust/scripts/`
    (ledger.mjs, state.mjs) to `stardust/scripts/stardust/`, the migrate
-   skill's `../migrate/scripts/` (migrate.mjs) to `stardust/scripts/migrate/`,
+   skill's `../migrate/scripts/` (migrate.mjs, import-run.mjs) to `stardust/scripts/migrate/`,
    AND the whole
    `../diff/scripts/` dir to `stardust/scripts/diff/` (the diff scripts
    import diff-profiles.mjs, and ALL live-target hardening — including
@@ -410,10 +410,10 @@ had one section for the whole run).
 - **Pages beyond the archetypes** go through the stardust `migrate` skill at
   **sibling tier** (`../migrate/reference/fidelity-tiers.md`) — and only
   AFTER their archetype is live and gated at the published origin (contract
-  § 3 row C, unit `C-archetype`; #126): structural clone as the encoder's
-  input + content-fidelity + delivery-lint + media-reconcile; the sibling's
-  only counting number is its gate row after PUT + preview (no local pixel
-  bar). Siblings inherit the archetype's proven encoder — never re-author one. **Template constancy is measured, not
+  § 3 row C, unit `C-archetype`; #126): the template's project importer
+  (contract § 1 row 2, #140) + content-fidelity + delivery-lint +
+  media-reconcile; the sibling's only counting number is its gate row after
+  PUT + preview (no local pixel bar). **Template constancy is measured, not
   assumed**: before cloning, run `stardust/scripts/replica/sibling-variance.mjs
   <archetype> <siblings…> --probe <block>=<sel> …` once per template and
   budget every delta as a block VARIANT class on the sibling's content (same

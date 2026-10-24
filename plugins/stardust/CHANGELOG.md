@@ -4,6 +4,35 @@ This file starts at 0.14.0. Prior versions (0.3.0 – 0.13.1) are documented in
 git history only (plus the branch-scoped notes in
 `CHANGELOG-redesign-adobecom.md` and `CHANGELOG-delivery-media-fidelity.md`).
 
+## 0.35.0 — the template encoder is project code in the AEM importer convention, fed by the page's structured source (#140)
+
+Field learning (a recorded replica rollout of a CMS-backed site, 8 templates, ~80 sibling pages): every cluster wrote its
+own encoder (capture → DA document) as an ad-hoc python or node script under the gitignored `stardust/.work/` — a clean
+clone lost the run's most reusable output, and three clusters forked one template's encoder three ways. The encoders
+scraped the rendered DOM even where the page shipped its CMS record as structured JSON (a `__NEXT_DATA__` with the post,
+author, FAQ and feature fields; JSON-LD), the more faithful source.
+
+- **The rule** (`replica/reference/handoff-contract.md` § 1 row 2; pointers in rows 4 and 9, § 4, `migrate/SKILL.md`
+  § Phase 2, `migrate/reference/fidelity-tiers.md`, `replica/SKILL.md` Phase 5): a template's encoder is project code
+  under `tools/importer/` in the AEM importer convention (`page-templates.json`, `import-<template>.js`,
+  `parsers/<block>[-<variant>].js`, `transformers/`), written once at `C-archetype`, committed, reused by every sibling
+  wave — never a `.work` script; a structured source beats DOM scraping when the page ships one.
+- **`migrate/scripts/import-run.mjs`** (new) runs the project importer headless: loads `page-templates.json` + the
+  template's ESM import script, builds the DOM from the capture (or `--fetch`) with `linkedom` (a project
+  devDependency, resolved from the project root), provides a `WebImporter` shim (`Blocks.createBlock` /
+  `getMetadataBlock`, `DOMUtils.remove` / `createTable`, `rules.*`, `FileUtils.sanitizePath`) so the same parsers run in
+  the AEM importer, and exposes `params.source = { nextData, jsonLd, meta, title, external }` through pluggable adapters
+  (`--source auto|next-data|json-ld|none`, `--source-json` for a CMS export; both `__NEXT_DATA__` forms — the
+  `application/json` tag and the `__NEXT_DATA__ = {…}` assignment; JSON-LD with raw control characters). It writes the
+  DA document (tables → div blocks, `<hr>` → sections), runs the import-time content count per page (capture headings,
+  text runs, CTAs + hrefs, images inside the script's `report.scope` must appear; drops are declared only through
+  `DOMUtils.remove` selectors or `report.deviations`, else exit 2) and, with `--compare <dir>`, a structural compare
+  against delivered documents (blocks rows × cols, text set, images, links per section; exit 3). Batch: `--template
+  <id> --slugs a,b`, `--all-of <id>`, `--list`. Tests: `migrate/scripts/test/import-run.test.mjs` (pure part, plus an
+  end-to-end run skipped where `linkedom` does not resolve).
+- **Folded**: `fidelity-tiers.md`'s second telling of "fork the archetype", the card's twice-told "31 siblings in one
+  unit" and "78 siblings" anecdotes (kept in their CHANGELOG entries) — prose delta −20 words.
+
 ## 0.34.6 — the common consent managers are dismissed with no flag (#139)
 
 Field learning (a recorded replica run on a site whose consent manager labels its button "Allow all"): no built-in

@@ -198,8 +198,8 @@ For 1-3 pages or `<slug>` invocation, skip the confirmation.
 
 In the replica flow a sibling renders only after its archetype is deployed and gated at the
 published origin (`../replica/reference/handoff-contract.md` § 3 row C, unit `C-archetype`; #126);
-the render is the encoder's input, its gate is the row after PUT. For each page in scope, follow
-`reference/migration-procedure.md` and
+its encoder is the project importer (contract § 1 row 2, #140), its gate the row after PUT.
+Per page in scope, follow `reference/migration-procedure.md` and
 `reference/template-and-module-rendering.md`:
 
 - **Idempotent skip check** first (sha-compare across
