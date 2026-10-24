@@ -680,3 +680,58 @@ export async function dismissOverlays(page, { extra = [], lateWindowMs = 6000 } 
 
   return dismissed;
 }
+
+// ---- served-side readiness: an EDS page is shot decorated or not at all (#141) --------------------------------
+// Under parallel gate load the delivery edge answered 429 (and the odd 5xx) for the document, styles.css or block
+// code; the page rendered undecorated (no CSS, no footer, blocks unloaded, 600–830 px off) and read as a FAIL.
+// watchServed records every such response on the served host; edsReady waits for the decoration markers (every
+// section and block reports `loaded`); readinessReason turns both into one reason or null; withServedRetry retries
+// the whole attempt with jittered back-off and then throws EdsNotReadyError — the caller marks the row `error`.
+const READY_TYPES = new Set(['document', 'stylesheet', 'script', 'fetch', 'xhr', 'font']);
+export function watchServed(page, url) {
+  let host = null; try { host = new URL(url).host; } catch { /* not a URL */ }
+  const bad = [];
+  const onResponse = (r) => { try { const s = r.status(); const u = new URL(r.url()); if (u.host === host && (s === 429 || s >= 500) && READY_TYPES.has(r.request().resourceType())) bad.push(`${s} ${u.pathname}`); } catch { /* detached */ } };
+  const onFailed = (q) => { try { const u = new URL(q.url()); if (u.host === host && READY_TYPES.has(q.resourceType())) bad.push(`failed ${u.pathname} (${(q.failure() || {}).errorText || 'error'})`); } catch { /* detached */ } };
+  page.on('response', onResponse); page.on('requestfailed', onFailed);
+  return { bad, stop: () => { page.off('response', onResponse); page.off('requestfailed', onFailed); } };
+}
+
+/** Wait until `main` has sections and every `.section` / `.block` reports loaded → { ok, sections, blocks, pending }. */
+export async function edsReady(page, { timeoutMs = 20000 } = {}) {
+  const read = () => page.evaluate(() => {
+    const secs = [...document.querySelectorAll('main .section')]; const blocks = [...document.querySelectorAll('.block')];
+    const pending = [...secs.filter((s) => s.dataset.sectionStatus !== 'loaded'), ...blocks.filter((b) => b.dataset.blockStatus !== 'loaded')].map((e) => e.dataset.blockName || e.className.split(' ')[0] || e.tagName).slice(0, 5);
+    return { sections: secs.length, blocks: blocks.length, pending, bareDivs: document.querySelectorAll('main > div:not(.section)').length };
+  }).catch(() => null);
+  const t0 = Date.now(); let s = await read();
+  while (!(s && s.sections && !s.pending.length) && Date.now() - t0 < timeoutMs) { await page.waitForTimeout(500); s = await read(); }
+  return { ok: !!(s && s.sections && !s.pending.length), ...(s || { sections: 0, blocks: 0, pending: ['unreadable'] }) };
+}
+
+/** One reason the served page is not measurable, or null. */
+export function readinessReason({ bad = [], ready = null } = {}) {
+  if (bad.length) return `served ${bad.slice(0, 3).join(', ')}${bad.length > 3 ? ` (+${bad.length - 3})` : ''}`;
+  if (ready && !ready.ok) return ready.sections ? `undecorated: pending ${ready.pending.join(', ')}` : 'undecorated: no main .section';
+  return null;
+}
+
+/** Jittered exponential back-off (ms) for attempt 0, 1, 2… */
+export const backoffMs = (attempt, { baseMs = 4000, capMs = 45000, rand = Math.random } = {}) => Math.round(Math.min(capMs, baseMs * 2 ** attempt) * (0.5 + rand()));
+
+export class EdsNotReadyError extends Error { constructor(msg) { super(msg); this.name = 'EdsNotReadyError'; } }
+/** HTTP 429 / 5xx from gotoLive (LiveHTTPError), a dropped connection (net::ERR_*) or a readiness miss → retryable. */
+export const retryableServed = (e) => !!e && (e.name === 'EdsNotReadyError' || (e.name === 'LiveHTTPError' && (e.status === 429 || e.status >= 500)) || /net::ERR_(CONNECTION|TIMED_OUT|NETWORK|EMPTY_RESPONSE|HTTP2)/.test(String(e.message)));
+
+/** attempt(i) runs one whole load; retried with back-off on retryableServed, then EdsNotReadyError. */
+export async function withServedRetry(attempt, { retries = 3, sleep = (ms) => new Promise((r) => { setTimeout(r, ms); }), onRetry = null, backoff = {} } = {}) {
+  let last;
+  for (let i = 0; i <= retries; i += 1) {
+    try { return await attempt(i); } catch (e) {
+      if (!retryableServed(e)) throw e;
+      last = e;
+      if (i < retries) { const ms = backoffMs(i, backoff); if (onRetry) onRetry(e, i, ms); await sleep(ms); }
+    }
+  }
+  throw new EdsNotReadyError(`not measurable after ${retries + 1} attempts: ${last.message}`);
+}

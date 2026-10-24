@@ -784,24 +784,18 @@ none visible on a local harness):
   page (recorded). Verify every `:has()` / block-class selector against the
   delivered `.plain.html` and rendered DOM, not the authored file.
 
-## The all-pages published-origin gate (gate-all) — four criteria (#125)
+## The all-pages published-origin gate (gate-all) — four criteria (#125), tiered (#141)
 
-**The recorded case.** A 96-page rollout of a pharmacy retailer gated its five archetypes and
-shipped the other pages unmeasured; the owner's first feedback was that they "don't look
-formatted as the original". A runner then gated every deployed page on stitched 1440 captures
-and pixel-compare, and a fix program took the roster from 3 to 67 PASS. Then the coupon-listing
-page PASSED at **6.7 % / Δh 69 px** while every one of its 284 cards was broken: a fixed-height
-card with `overflow: hidden`, the body ~30 px too low, the description clipped mid-glyph, the
-details link pushed under the primary button — and the sort control reading a different default
-than the origin. The links WERE in the served DOM; pure CSS geometry. Pixelmatch underweights
-small text inside otherwise matching shapes (the text-only number, `--text-boxes`, read 16.5 %).
-"PASS" meant "right shapes at the right places", not "every element present and legible".
-Element presence and legibility are checkable — so `gate-all.mjs` checks them.
+Why element criteria: a recorded listing page PASSED the pixel bar at 6.7 % with every card
+clipped (CHANGELOG 0.26.0, #125) — "PASS" meant "right shapes at the right places", not "every
+element present and legible".
 
-`node stardust/scripts/replica/gate-all.mjs` (project root; through `run-bg.mjs`) runs, for
-every `deployed` page in `stardust/state.json`, the stitched captures and pixel-compare of the
-archetype gate PLUS two DOM probes that load both pages in the same window-free real-Chrome tier
-and settle them the same way (`measure-live.mjs`), and writes
+`node stardust/scripts/replica/gate-all.mjs` (project root; through `run-bg.mjs`) gates every
+page that is `deployed` in `stardust/state.json`, or `migrated` with a delivered URL (state
+`liveUrl`, else the rollout coverage row) — never a hand-made state copy. Workers keep their
+browsers across pages; the probes load each side once and settle it the same way
+(`measure-live.mjs`); the served side is measured decorated or not at all (a 429 / 5xx or an
+unloaded block is retried with back-off, then the row is an `error`, never a FAIL). It writes
 `stardust/replica/gates/all-<width>/<slug>/{origin,eds,diff}.png + pixel.json + content.json +
 clip.json [+ units.json]` and `summary.{json,md}`. **Verdict, per page — all four:**
 
@@ -823,6 +817,19 @@ clip.json [+ units.json]` and `summary.{json,md}`. **Verdict, per page — all f
    (+ **units** — `unit-geometry` off / hidden / missing = 0 for `units.json` entries marked
    `required: true`; others are advisory rows.)
 
+**Tiers (#141).** Archetypes and unique pages get the full row above. A SIBLING gets a
+**structural row** — criteria 2–4 + units, the height from the probes' settled document
+heights — when its archetype's own row passed at that width, its import-time content count
+passed (#140: `_meta.json` `gatesPassed`, or import-run `--json` results via `--import-check`)
+and its blocks keep the archetype's order (`<path>.plain.html`; an omitted block fits). A full
+pixel row instead for a sibling failing any of those, a structural row that flags anything, and
+the **sample**, per archetype: the fewest siblings whose rows cover every block or variant the
+archetype lacks, one per state `variant`, and `--sample 2` more by a seeded order (`--seed`,
+default the width). A sampled pixel FAIL sends every structural sibling of that archetype to a
+full row. Rows record `gateTier` + `tierReason`; a structural row is "gated (structural)" in the
+evidence, never ungated. `--sample all` is every page full; the calibration behind the default
+is in CHANGELOG 0.36.0.
+
 **The table rule.** `--stage prototype` (pages with a `prototypePath`, build = the served
 prototype dir, origin = the archetype round's cached `live.png` when present) writes
 `gates/prototypes-<w>/summary.{json,md}`; the default published stage writes
@@ -832,14 +839,12 @@ without any table the `gate.sh` logs stand in and `--check` names the missing ta
 eval requires both summaries with a row per page. The pixel-only verdict (1 + 2) is
 recorded beside the full one per page and in the totals: every run is calibration data. Sidecars in the gate dir, each entry documented: `masks.json` (printed
 on the verdict, never reported unmasked), `overrides.json` (shown BESIDE the measured number,
-never replacing it), `clip-allow.json`, `presence.json`, `units.json`. Origin fallback: live
-stitch → previous origin (`--recapture-origin`) → crawl fullPage screenshot (`crawl-fullpage`,
-asymmetric, flagged). **Browser tier: the best available, registered.** The probes elect real
-Chrome (`channel: 'chrome'`, window-free) and fall back to bundled Chromium when it is not
-installed; every probe writes the tier it actually ran (`chrome` | `chromium-fallback` |
-`chromium`) into its JSON, `summary.md` carries a `browser` column and the calibration line
-counts degraded pages — a run that quietly lost its origin measurements on a bot-managed site is
-visible in the artifact. Sites without bot management measure identically on both tiers.
+never replacing it), `clip-allow.json`, `presence.json`, `units.json`. Origin: the frozen baseline
+(#138) when present, else a live stitch (consent: live-session's built-ins, `--consent` /
+`--dismiss` for a site's own controls, both sides) → previous origin (`--recapture-origin`) →
+crawl fullPage screenshot (`crawl-fullpage`, asymmetric, flagged). **Browser tier:** the probes elect window-free real Chrome, else bundled
+Chromium, and record the tier they ran (`browser` column; degraded pages counted on the
+calibration line).
 `--eds-host` gates a code branch against the same content (branch hosts
 serve the LITERAL branch name — `fix/x` → push a mirror `fix-x`). Read a finding as one crop of
 the two captures at the row's band, never the whole pages.
@@ -853,8 +858,6 @@ template — the variance probe across the template's other pages decides a new 
 more share the composition: craft, gate, deploy, migrate its siblings) or a standalone prototype
 (an archetype of one); tier and template change in `state.json`, the redirect row stays. Cap: 3
 fix rounds per page at the published origin, then this decision — never a fourth round.
-Calibration on the recorded roster (96 pages): pixel-only 66 PASS → full 28 PASS; failing by
-criterion pixel 30, height 6, clip 23, content 31; content n/a on 37 (edge-blocked origins).
 
 ## Residual logging format
 

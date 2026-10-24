@@ -10,8 +10,8 @@
  * inner elements (role + text, shadow-DOM aware) relative to the unit's corner, aligned (key, text
  * prefix, relaxed link ↔ button, images by order, leftover text by position) and reported as
  * Δx / Δy / Δw / Δh against --tol, plus the unit's own size / position delta; `hidden` where the
- * served page clips. Both sides settle the same way; the origin inventory caches per slug under
- * stardust/current/measure/<slug>-units.json.
+ * served page clips. Both sides settle the same way; the origin inventory caches per slug and width under
+ * stardust/current/measure/<slug>-units-<width>.json (#141).
  *
  * Repeated-unit FAMILIES are declared once per project in stardust/replica/units.json —
  *   { "<family>": { "origin": "<sel>", "build": "<sel>", "n": 2, "required": true, "pages": ["<slug>"], "templates": ["<tpl>"] } }
@@ -41,7 +41,7 @@ Usage: node unit-geometry.mjs <originUrl> <edsUrl> (--unit "<selOrigin>=<selEds>
   --tol <px>              per-element tolerance (default 4)
   --width <px>            viewport width (default 1440)
   --json [<file>]         JSON on stdout or to <file>
-  --slug <s>              cache the origin inventory at stardust/current/measure/<s>-units.json (--force to redo)
+  --slug <s>              cache the origin inventory at stardust/current/measure/<s>-units-<width>.json (--force to redo)
   --advisory              report only, exit 0
   --plain                 bundled Chromium instead of the window-free real-Chrome tier
   --warmup <url>          visit this URL first on the origin side
@@ -176,6 +176,7 @@ export function formatUnits(results, tol) {
       for (const x of u.extra) lines.push(`| ${x.role} "${(x.text || x.key).slice(0, 36)}" | — | ${fmt(x)} | | | | | 🟡 extra |`);
     }
     if (res.error) lines.push(`${res.sel}: ${res.error}`);
+    if (res.na) lines.push(`${res.sel}: n/a — ${res.na}`);
   }
   return lines.join('\n');
 }
@@ -215,14 +216,32 @@ export function parseArgs(argv) {
   return opts;
 }
 
-export async function measureUnits(browser, url, sels, { width, locale, warmup, n }) {
+export async function measureUnits(browser, url, sels, { width, locale, warmup, n, eds = false, extra = [] }) {
   const { ctx, page } = await openPage(browser, { width, locale });
   try {
-    const v = await visit(page, url, { warmup });
-    const bySel = {};
-    for (const sel of sels) bySel[sel] = await page.evaluate(inPage(unitInventoryInPage, { sel, n }));
-    return { url, at: new Date().toISOString(), status: v.status, docH: v.docH, bySel };
+    const v = await visit(page, url, { warmup, eds, extra });
+    return { url, at: new Date().toISOString(), status: v.status, docH: v.docH, bySel: await unitsOnPage(page, sels, n), width };
   } finally { await ctx.close(); }
+}
+/** The unit inventories on an already visited page (gate-all measures them on content-presence's load, #141). */
+export async function unitsOnPage(page, sels, n) {
+  const bySel = {};
+  for (const sel of sels) bySel[sel] = await page.evaluate(inPage(unitInventoryInPage, { sel, n }));
+  return bySel;
+}
+
+/**
+ * The origin inventory cache key: per slug AND width (#141) — a 360 run that read the 1440 inventory reported false
+ * `units off` on 8–14 pages. A cached record of another width (or a legacy `<slug>-units.json`) is never read.
+ */
+export const unitCacheKey = (slug, width) => `${slug}-units-${width}`;
+export const cacheUsable = (cached, sels, width) => !!(cached && cached.width === width && cached.bySel && sels.every((s) => cached.bySel[s]));
+
+/** The --json record (the CLI and gate-all write the same shape). */
+export function unitsReport(oInv, eInv, units, { tol, n, width, tier = null, origin = oInv.url, eds = eInv.url }) {
+  const results = units.map((pair) => compareUnits(oInv, eInv, pair, tol));
+  const v = verdictOf(results);
+  return { _provenance: { writtenBy: 'unit-geometry.mjs', at: new Date().toISOString(), tol, n, width, tier }, origin: { url: origin, at: oInv.at, docH: oInv.docH }, eds: { url: eds, at: eInv.at, docH: eInv.docH }, results, verdict: v };
 }
 
 /** Compare two measurement results for one --unit pair. */
@@ -230,6 +249,9 @@ export function compareUnits(oInv, eInv, pair, tol) {
   const o = oInv.bySel[pair.origin]; const e = eInv.bySel[pair.eds];
   const res = { sel: `${pair.origin}=${pair.eds}`, family: pair.family || null, required: pair.required !== false, originMatches: o.matches, edsMatches: e.matches, units: [] };
   if (o.error || e.error) { res.error = o.error ? `origin: ${o.error}` : `served: ${e.error}`; return res; }
+  // a family with no DOM match on the ORIGIN page does not apply to it (a template-wide family on a layout without the
+  // unit): n/a, never an error (#141 — the error failed the page, though the served side cannot be wrong about it)
+  if (!o.matches) { res.na = `not on the origin page (0 DOM matches) — the family does not apply`; return res; }
   if (!o.units.length || !e.units.length) { res.error = `no visible unit on the ${!o.units.length ? 'origin' : 'served'} side (${o.matches} / ${e.matches} DOM matches)`; return res; }
   for (let i = 0; i < Math.min(o.units.length, e.units.length); i += 1) res.units.push({ index: i, origin: { path: o.units[i].path }, eds: { path: e.units[i].path }, ...alignUnit(o.units[i], e.units[i], tol) });
   return res;
@@ -252,16 +274,15 @@ async function main() {
   let oInv; let eInv; let tier;
   try {
     tier = browserTier(browser);
-    const cacheKey = opts.slug ? `${opts.slug}-units` : null;
+    const cacheKey = opts.slug ? unitCacheKey(opts.slug, opts.width) : null;
     const cached = cacheKey && !opts.force ? readCache(cacheKey) : null;
     const oSels = opts.units.map((u) => u.origin);
-    if (cached && oSels.every((s) => cached.bySel && cached.bySel[s])) { oInv = cached; console.log(`origin: cached ${cacheKey} (${cached.at})`); }
+    if (cacheUsable(cached, oSels, opts.width)) { oInv = cached; console.log(`origin: cached ${cacheKey} (${cached.at})`); }
     else { oInv = await measureUnits(browser, opts.origin, oSels, { width: opts.width, locale: opts.locale, warmup: opts.warmup, n: opts.n }); if (cacheKey) writeCache(cacheKey, oInv); }
     eInv = await measureUnits(browser, opts.eds, opts.units.map((u) => u.eds), { width: opts.width, locale: opts.locale, warmup: null, n: opts.n });
   } finally { await browser.close(); }
-  const results = opts.units.map((pair) => compareUnits(oInv, eInv, pair, opts.tol));
-  const v = verdictOf(results);
-  const out = { _provenance: { writtenBy: 'unit-geometry.mjs', at: new Date().toISOString(), tol: opts.tol, n: opts.n, width: opts.width, tier }, origin: { url: opts.origin, at: oInv.at, docH: oInv.docH }, eds: { url: opts.eds, at: eInv.at, docH: eInv.docH }, results, verdict: v };
+  const out = unitsReport(oInv, eInv, opts.units, { tol: opts.tol, n: opts.n, width: opts.width, tier, origin: opts.origin, eds: opts.eds });
+  const { results, verdict: v } = out;
   if (opts.json && !opts.jsonFile) console.log(JSON.stringify(out, null, 1));
   else {
     console.log(`unit-geometry @ ${opts.width}px, tol ${opts.tol}px — ${opts.origin} vs ${opts.eds}`);

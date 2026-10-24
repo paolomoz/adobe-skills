@@ -337,7 +337,7 @@ export function parseVariance(text, paths = []) {
 
 // ---- derivation --------------------------------------------------------------------------------
 const latest = (items, at = (x) => jobAt(x.j)) => items.reduce((best, x) => (!best || at(x) > at(best) ? x : best), null);
-const fmtPct = (n) => `${n.toFixed(2)}%`;
+const fmtPct = (n) => (n == null ? 'structural' : `${n.toFixed(2)}%`); // null = a structural table row (#141)
 // The `--path` delivery-lint expects: the output path without `.html` and without a trailing `/index`; the root page is `/`.
 export function daPath(outputPath) { return `/${outputPath}`.replace(/\.html$/, '').replace(/\/index$/, '') || '/'; }
 // The page's DELIVERED content file (the deploy driver's tree: a file's path minus `.html` is its DA path): `<content>/<da-path>.html`,
@@ -388,7 +388,8 @@ export function derive(page, jobs, o, ctx) {
       if (!row) { open(`pixel-gate-${w}`, `no row in the pixel table (${[t.published && 'all', t.prototype && 'prototypes'].filter(Boolean).map((n) => `${n}-${w}`).join(', ')}) — run gate-all.mjs${t.published ? '' : ' --stage prototype'} so the page is measured`); continue; }
       const regime = t.published && t.published[page.slug] ? 'published' : 'prototype';
       facts.pixel[w] = { pct: row.pct, px: null, heightDelta: row.heightDelta, overflowX: null, clipped: row.clipped ?? null, content: row.content || null, verdict: row.pass ? 'PASS' : 'FAIL', label: 'table', regime };
-      const line = `${fmtPct(row.pct)}, height delta ${row.heightDelta ?? '?'}px, clipped ${row.clipped ?? 'n/a'}, content ${row.contentNA ? 'n/a' : row.content ? `MISSING ${row.content.missing} / HIDDEN ${row.content.hidden}` : 'n/a'} (${relative(process.cwd(), row.file).replace(/\.json$/, '.md')}) [${regime} regime]`;
+      // a structural row (#141, gate-all's sibling tier) has no pixel number: it is evidence as "gated (structural)"
+      const line = `${row.gateTier === 'structural' ? `gated (structural, ${row.tierReason || 'sibling'})` : fmtPct(row.pct)}, height delta ${row.heightDelta ?? '?'}px${row.heightSource === 'docH' ? ' (docH)' : ''}, clipped ${row.clipped ?? 'n/a'}, content ${row.contentNA ? 'n/a' : row.content ? `MISSING ${row.content.missing} / HIDDEN ${row.content.hidden}` : 'n/a'} (${relative(process.cwd(), row.file).replace(/\.json$/, '.md')}) [${regime} regime]`;
       if (row.pass) pass(`pixel-gate-${w}`, line); else open(`pixel-gate-${w}`, `${(row.reasons || []).join('; ') || 'FAIL'} — ${line}`, 'FAIL');
       continue;
     }

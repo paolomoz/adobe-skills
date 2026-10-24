@@ -412,6 +412,14 @@ check('with a pixel table for the width, the row decides and a page without a ro
   assert.ok(loadTables(join(root, 'stardust/replica/gates'), [1440, 360])[360].any === false);
   rmSync(join(root, 'stardust/replica/gates'), { recursive: true, force: true });
 });
+check('a structural row (#141, gate-all\'s sibling tier) is evidence "gated (structural)" — no pixel number to format', () => {
+  const dir = join(root, 'stardust/replica/gates/all-1440'); mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'summary.json'), JSON.stringify({ rows: [{ slug: 'tours-north', gateTier: 'structural', tierReason: 'sibling', pct: null, heightDelta: -4, heightSource: 'docH', clipped: 0, content: { missing: 0, hidden: 0 }, pass: true, reasons: [] }] }));
+  const by = Object.fromEntries(JSON.parse(run('--dry-run', '--json').out).map((r) => [r.slug, r]));
+  assert.ok(by['tours-north'].gatesPassed.includes('pixel-gate-1440'));
+  assert.match(by['tours-north'].gateEvidence['pixel-gate-1440'], /^gated \(structural, sibling\), height delta -4px \(docH\), clipped 0, content MISSING 0 \/ HIDDEN 0/);
+  rmSync(join(root, 'stardust/replica/gates'), { recursive: true, force: true });
+});
 check('without any table the log rule stands and --check notes the missing table', () => {
   const r = run('--dry-run', '--check');
   assert.match(r.out + r.err, /no pixel table for 1440 under stardust\/replica\/gates\//);

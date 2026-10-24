@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// skills/diff/scripts/test/live-session.test.mjs — live-session.mjs's pure surface, no browser: the exported names
+// skills/diff/scripts/test/live-session.test.mjs — live-session.mjs's pure surface, no browser (+ #141: readinessReason,
+// backoffMs, withServedRetry): the exported names
 // the instruments import; the 2xx denial page — the vendor signatures in order, normalizeDenialText, denialMarker per
 // signature, the pair rule, the 2 KB rule, the one-error-heading rule, an ordinary page (large, or small with a plain
 // heading) never classified; withDeadline; pageDenial on stub pages (one retry, the skipped result, the probe
@@ -317,6 +318,24 @@ await checkAsync('gotoLive: a localhost or loopback URL is never probed for a de
     assert.equal(resp, page.last, url);
     assert.deepEqual([page.calls.goto, page.calls.evaluate, lines], [1, 0, []], `${url}: one hit, no probe, nothing on stderr`);
   }
+});
+
+await checkAsync('served readiness (#141): readinessReason, backoffMs jitter bounds, withServedRetry retries 429 / 5xx / undecorated then throws EdsNotReadyError, passes other errors through', async () => {
+  assert.equal(session.readinessReason({ bad: [], ready: { ok: true, sections: 3, pending: [] } }), null);
+  assert.equal(session.readinessReason({ bad: ['429 /styles/styles.css'] }), 'served 429 /styles/styles.css');
+  assert.equal(session.readinessReason({ bad: ['429 /a', '429 /b', '503 /c', '429 /d'] }), 'served 429 /a, 429 /b, 503 /c (+1)');
+  assert.equal(session.readinessReason({ ready: { ok: false, sections: 0, pending: [] } }), 'undecorated: no main .section');
+  assert.equal(session.readinessReason({ ready: { ok: false, sections: 4, pending: ['cards'] } }), 'undecorated: pending cards');
+  assert.equal(session.backoffMs(0, { rand: () => 0 }), 2000); assert.equal(session.backoffMs(1, { rand: () => 1 }), 12000); assert.equal(session.backoffMs(9, { rand: () => 0.5 }), 45000);
+  const slept = []; let n = 0;
+  const ok = await session.withServedRetry(async () => { n += 1; if (n < 3) throw new session.EdsNotReadyError('served 429 /'); return 'shot'; }, { sleep: async (ms) => { slept.push(ms); }, backoff: { rand: () => 0.5 } });
+  assert.equal(ok, 'shot'); assert.deepEqual(slept, [4000, 8000]);
+  const http = Object.assign(new Error('HTTP 503'), { name: 'LiveHTTPError', status: 503 });
+  await assert.rejects(session.withServedRetry(async () => { throw http; }, { retries: 1, sleep: async () => {} }), (e) => e.name === 'EdsNotReadyError' && /after 2 attempts: HTTP 503/.test(e.message));
+  assert.equal(session.retryableServed(new Error('page.goto: net::ERR_CONNECTION_CLOSED at https://x.test/')), true, 'a dropped connection is retried');
+  assert.equal(session.retryableServed(new Error('page.goto: net::ERR_NAME_NOT_RESOLVED')), false);
+  const notFound = Object.assign(new Error('HTTP 404'), { name: 'LiveHTTPError', status: 404 });
+  await assert.rejects(session.withServedRetry(async () => { throw notFound; }, { sleep: async () => {} }), (e) => e === notFound);
 });
 
 console.log(failed ? `\n${failed} of ${checks} checks failing` : `\nlive-session: all ${checks} checks passed`);

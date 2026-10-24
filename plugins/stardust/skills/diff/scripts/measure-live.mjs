@@ -15,7 +15,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { REAL_CHROME_UA, browserTier, defaultWaitUntil, dismissOverlays, gotoLive, isLiveHttpUrl, launchStealthHeaded, newLiveContext } from './live-session.mjs';
+import { EdsNotReadyError, REAL_CHROME_UA, browserTier, defaultWaitUntil, dismissOverlays, edsReady, gotoLive, isLiveHttpUrl, launchStealthHeaded, newLiveContext, readinessReason, watchServed } from './live-session.mjs';
 
 export { browserTier };
 
@@ -66,19 +66,28 @@ export async function settle(page, { passes = 4, step = 400, dwell = 250, emptyS
 
 /**
  * Navigate (fail-loud live-session contract: a challenge throws BotChallengeError, a 404 build is measured
- * with a warning), dismiss overlays, settle. `warmup` visits another URL first in the same context.
+ * with a warning), dismiss overlays (`extra` = a site's own consent / dismiss selectors, tried first), settle.
+ * `warmup` visits another URL first in the same context.
  */
-export async function visit(page, url, { warmup = null, settle: settleOpts = {}, dismiss = true, solveWindow = true, timeoutMs = 90000, httpError = 'measure' } = {}) {
+export async function visit(page, url, { warmup = null, settle: settleOpts = {}, dismiss = true, solveWindow = true, timeoutMs = 90000, httpError = 'measure', eds = false, extra = [] } = {}) {
   if (warmup) {
     await gotoLive(page, warmup, { waitUntil: 'domcontentloaded', timeoutMs, settleMs: 0, solveWindow, httpError: 'measure' });
     await page.waitForTimeout(2500);
   }
-  const resp = await gotoLive(page, url, { waitUntil: defaultWaitUntil(url), timeoutMs, settleMs: 0, solveWindow, httpError });
-  await page.waitForTimeout(2500);
-  if (dismiss) { try { await dismissOverlays(page, { lateWindowMs: isLiveHttpUrl(url) ? 4000 : 0 }); } catch { /* none */ } }
-  const s = await settle(page, settleOpts);
-  if (dismiss) { try { await dismissOverlays(page, { lateWindowMs: 0 }); } catch { /* none */ } }
-  return { status: resp ? resp.status() : null, ...s };
+  // eds: the served EDS page is measured decorated or not at all (live-session watchServed / edsReady, #141) —
+  // EdsNotReadyError is retryable through withServedRetry.
+  const watch = eds ? watchServed(page, url) : null;
+  const notReady = (ready) => { const why = readinessReason({ bad: watch.bad, ready }); if (why) throw new EdsNotReadyError(why); };
+  try {
+    const resp = await gotoLive(page, url, { waitUntil: defaultWaitUntil(url), timeoutMs, settleMs: 0, solveWindow, httpError });
+    await page.waitForTimeout(2500);
+    if (watch) notReady(await edsReady(page));
+    if (dismiss) { try { await dismissOverlays(page, { extra, lateWindowMs: isLiveHttpUrl(url) ? 4000 : 0 }); } catch { /* none */ } }
+    const s = await settle(page, settleOpts);
+    if (dismiss) { try { await dismissOverlays(page, { extra, lateWindowMs: 0 }); } catch { /* none */ } }
+    if (watch) notReady(await edsReady(page, { timeoutMs: 8000 }));
+    return { status: resp ? resp.status() : null, ...s };
+  } finally { if (watch) watch.stop(); }
 }
 
 // ---- in-page functions (Playwright-serialised; ONE argument object) --------------------------------

@@ -9,7 +9,7 @@
 // (the recorded shape — about 900 px of "can't process your request" + "Incident Number" served with 200 — the same
 // rendered by script after load, and a tiny page under one error heading) exit 3 with no PNG and no capture.json;
 // an ordinary page and a long article that mentions "press & hold" exit 0 and capture.json records denialCheck 'ok'.
-// Also (0.34.3): parseArgs, overlayExtras, chunkTarget, scrollStalled, stitchRows, and end to end --consent closing a
+// #141: exit 5 for EdsNotReadyError, --eds / --retries parsed (default off, 3). Also (0.34.3): parseArgs, overlayExtras, chunkTarget, scrollStalled, stitchRows, and end to end --consent closing a
 // fixture consent box and --no-dismiss leaving it. And (0.34.5) the origin-baseline contract, no browser: the pure
 // bookkeeping (baselineTargets, baselineProvenance, writeJsonAtomic, baselineExists / readBaselineProvenance,
 // baselineStatus, compareBaseline, liveRecord), the two subcommands gate.sh calls (`baseline <dir>`, `record <live.json>`),
@@ -102,6 +102,7 @@ await check('exitCodeFor: a BotChallengeError is 3 (blocked — escalate --heade
   assert.equal(exitCodeFor(Object.assign(new Error('x'), { name: 'LiveHTTPError' })), 1);
   assert.equal(exitCodeFor(new Error('scroll stall at chunk target 900px')), 1);
   assert.equal(exitCodeFor(null), 1);
+  assert.equal(exitCodeFor(new session.EdsNotReadyError('not measurable after 4 attempts: served 429 /')), 5, '#141: an undecorated served page is never shot');
 });
 const pageOf = (probe) => ({ evaluate: async () => probe, waitForTimeout: async () => {} });
 await check('recheckDenial (stub pages, the real pageDenial): a vendor signature → BotChallengeError naming HTTP <status>, the signature, "origin blocked", --headed — exit code 3', async () => {
@@ -182,6 +183,8 @@ await check('parseArgs: the baseline flags are OFF by default and the other opti
   const on = opts(['--freeze-baseline', '--force', '--settle']);
   assert.deepEqual([on.freezeBaseline, on.force, on.checkBaseline, on.wait], [true, true, false, 3000]);
   assert.equal(opts(['--check-baseline']).checkBaseline, true);
+  assert.deepEqual([off.eds, off.retries], [false, 3], '#141 --eds default off');
+  assert.deepEqual([opts(['--eds', '--retries', '1']).eds, opts(['--eds', '--retries', '1']).retries], [true, 1]);
 });
 
 // ---- the pure bookkeeping -------------------------------------------------------------------------------------

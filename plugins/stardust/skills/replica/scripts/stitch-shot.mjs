@@ -84,6 +84,7 @@
  *                         <out.png>, for gate.sh --gate-against-baseline (below)
  *     --check-baseline    print a fresh shot's Δheight vs the frozen baseline
  *     --force             re-freeze over an existing baseline
+ *     --eds [--retries 3] served side: decorated + no 429/5xx, else retry, exit 5
  *   node skills/replica/scripts/stitch-shot.mjs baseline <dir> [--url <u>] [--width <px>]
  *   node skills/replica/scripts/stitch-shot.mjs record <live.json> --origin live|baseline …
  *                         the gate's bookkeeping, no browser (HELP § Origin baseline)
@@ -105,7 +106,9 @@
  * Exit codes: 0 written, 1 error, 2 a baseline refusal (exists without --force,
  * fonts failed, a check aimed at baseline.png), 3 bot challenge (live side
  * blocked — an edge interstitial or a 2xx denial page; fail loud, never
- * captured, no PNG and no capture.json; escalate with --headed).
+ * captured, no PNG and no capture.json; escalate with --headed), 5 --eds page
+ * not measurable (undecorated, 429 / 5xx through every retry). One capture on
+ * an open page is exported as `captureStitched` (gate-all's in-process workers).
  */
 
 /* eslint-disable import/no-extraneous-dependencies, import/extensions, no-await-in-loop, no-restricted-syntax, brace-style, object-curly-newline, max-len */
@@ -150,6 +153,9 @@ Usage: node stitch-shot.mjs <url> <out.png> [options]
   --check-baseline  capture a fresh shot to <out.png> and print its Δheight vs the frozen baseline in <out.png>'s
                     dir — no verdict; never writes baseline.png: <out.png> named baseline.png is refused (exit 2)
   --force           re-freeze over an existing baseline (with --freeze-baseline)
+  --eds             the URL is a served EDS page: shot only once every section and block reports loaded and no
+                    document / style / script / font on its host answered 429 or 5xx; else retried with jittered
+                    back-off (--retries, default 3), then exit 5 — no PNG (#141)
   --help            this text
 
 Origin baseline (opt-in, default OFF — gate.sh --gate-against-baseline): one frozen origin per page and width,
@@ -174,7 +180,7 @@ instead.
 Run the SAME command shape against the live page and the served prototype.
 Exit codes: 0 written, 1 error, 2 baseline refusal, 3 bot challenge (live side blocked — an edge interstitial or a
 2xx denial page, read by live-session's pageDenial at the entry and after the dismissal sweeps; fail loud, never
-captured: no PNG, no capture.json; escalate --headed).`;
+captured: no PNG, no capture.json; escalate --headed), 5 --eds page not measurable (undecorated / 429 / 5xx).`;
 export { HELP };
 if (process.argv.includes('--help') || process.argv.includes('-h')) { console.log(HELP); process.exit(0); }
 export class UsageError extends Error { constructor(msg) { super(msg); this.name = 'UsageError'; } }
@@ -182,7 +188,7 @@ export class UsageError extends Error { constructor(msg) { super(msg); this.name
 export function parseArgs(argv) {
   const rest = argv.slice(2);
   const pos = [];
-  const opts = { width: 1440, vh: 900, settle: false, consent: null, dismiss: [], noDismiss: false, headed: false, locale: null, ua: REAL_CHROME_UA, wait: null, timeout: 60000, freezeBaseline: false, checkBaseline: false, force: false };
+  const opts = { width: 1440, vh: 900, settle: false, consent: null, dismiss: [], noDismiss: false, headed: false, locale: null, ua: REAL_CHROME_UA, wait: null, timeout: 60000, freezeBaseline: false, checkBaseline: false, force: false, eds: false, retries: 3 };
   for (let i = 0; i < rest.length; i += 1) {
     const a = rest[i];
     if (a === '--width') { opts.width = Number(rest[i += 1]); }
@@ -199,6 +205,8 @@ export function parseArgs(argv) {
     else if (a === '--freeze-baseline') { opts.freezeBaseline = true; }
     else if (a === '--check-baseline') { opts.checkBaseline = true; }
     else if (a === '--force') { opts.force = true; }
+    else if (a === '--eds') { opts.eds = true; }
+    else if (a === '--retries') { opts.retries = Number(rest[i += 1]); }
     else if (a.startsWith('--')) { throw new UsageError(`unknown flag ${a}`); }
     else pos.push(a);
   }
@@ -383,14 +391,14 @@ export function recordCommand(argv) {
 // Dismiss both overlay classes (consent + timed marketing modals) via
 // live-session, log what was closed, and note that the mouse is parked by
 // dismissOverlays itself (bottom-left — rule 10).
-async function dismissAndLog(page, url, opts) {
+async function dismissAndLog(page, url, opts, log = console.log) {
   const extra = overlayExtras(opts);
   // late-modal poll window only on live targets — the served prototype's
   // overlays are not timed third-party scripts, they render immediately.
   const d = await dismissOverlays(page, { extra, lateWindowMs: isLiveHttpUrl(url) ? 6000 : 0 });
-  if (d.consent) console.log(`consent dismissed via ${d.consent}`);
-  for (const sel of d.extra) console.log(`overlay dismissed via extra selector ${sel}`);
-  for (const sel of d.marketing) console.log(`marketing modal dismissed via ${sel}`);
+  if (d.consent) log(`consent dismissed via ${d.consent}`);
+  for (const sel of d.extra) log(`overlay dismissed via extra selector ${sel}`);
+  for (const sel of d.marketing) log(`marketing modal dismissed via ${sel}`);
   return d;
 }
 
@@ -414,8 +422,138 @@ export async function recheckDenial(session, page, url, status) {
 }
 
 // exit 3 = bot challenge on the live side — an edge interstitial or a 2xx denial page (distinct from generic errors,
-// so a gate runner can tell "blocked — escalate with --headed" from "capture broke").
-export const exitCodeFor = (e) => (e && e.name === 'BotChallengeError' ? 3 : 1);
+// so a gate runner can tell "blocked — escalate with --headed" from "capture broke"); exit 5 = --eds and the served
+// page stayed undecorated or answered 429 / 5xx through every retry (never shot — the row is an error, not a FAIL).
+export const exitCodeFor = (e) => (e && e.name === 'BotChallengeError' ? 3 : e && e.name === 'EdsNotReadyError' ? 5 : 1);
+
+/**
+ * One stitched capture on an open page (the CLI and gate-all's in-process workers share it, #141) →
+ * { pngBuf, height, chunks, denialCheck, failedFonts }. Nothing is written. With opts.eds the served page must be
+ * decorated (live-session edsReady) and free of 429 / 5xx responses on its host, else EdsNotReadyError (retryable:
+ * withServedRetry); opts.freezeBaseline stops before the chunk loop when fonts failed (failedFonts set, no pngBuf).
+ */
+export async function captureStitched(page, url, opts, { PNG, log = console.log, warn = console.error } = {}) {
+  const watch = opts.eds ? liveSession.watchServed(page, url) : null;
+  const notReady = (ready) => { const why = liveSession.readinessReason({ bad: watch.bad, ready }); if (why) throw new liveSession.EdsNotReadyError(why); };
+  try {
+    // Challenge/blocked interstitial → loud BotChallengeError (exit 3); a challenge page must never be stitched as if
+    // it were the source. solveWindow only under --headed: headless clearance never lands, and the solve loop would
+    // spend the Akamai block budget (1 hit vs up to 4).
+    const entry = await gotoLive(page, url, { waitUntil: 'domcontentloaded', timeoutMs: opts.timeout, settleMs: 0, solveWindow: opts.headed });
+    await page.waitForTimeout(opts.wait);
+    if (watch) notReady(await liveSession.edsReady(page));
+    // --no-dismiss: the capture shows whatever the site shows (the gate's --no-dismiss reaches both sides).
+    if (opts.noDismiss) log('overlays left as the page shows them (--no-dismiss)');
+    else await dismissAndLog(page, url, opts, log);
+
+    if (opts.settle) {
+      // Slow-scroll settle: fires scroll-triggered lazy loaders the way a real visit does. Do NOT force data-src→src
+      // swaps: on CDN-defended sites the forced rendition requests 403 and produce broken-image icons — worse than
+      // the site's own designed placeholders. Ground truth is the page as observable by this instrument.
+      await page.evaluate(async () => {
+        for (let y = 0; y <= document.body.scrollHeight; y += 300) {
+          window.scrollTo(0, y);
+          await new Promise((r) => { setTimeout(r, 220); });
+        }
+      });
+      await page.waitForTimeout(3000);
+      // Timed marketing/newsletter modals (CH-1) often fire DURING the settle window — sweep again so a late
+      // interstitial isn't baked into the stitched capture (recorded: a fashion retailer's "Sign up, stay updated!").
+      if (!opts.noDismiss) await dismissAndLog(page, url, opts, log);
+    }
+    // lazy sections and blocks load during the settle: a 429 there leaves them undecorated too
+    if (watch) notReady(await liveSession.edsReady(page, { timeoutMs: 8000 }));
+
+    // A denial page a script rendered after domcontentloaded (gotoLive read the entry): exit 3, no PNG, no sidecar.
+    const denialCheck = await recheckDenial(liveSession, page, url, entry.status());
+
+    // Freeze animations/transitions/carets for stable chunks — AFTER settle.
+    await page.addStyleTag({ content: '*,*::before,*::after{animation-play-state:paused!important;transition:none!important;caret-color:transparent!important;scroll-behavior:auto!important;}html{scroll-behavior:auto!important}' });
+    // The CSS freeze stabilizes CSS animations only. It does NOT stop (a) <video> playback — autoplaying teaser
+    // videos capture an arbitrary frame per run; (b) JS-timer carousels (slick autoplay swaps slides mid-capture).
+    // Applied symmetrically to both sides: pause every video at t=0 and clear all pending timeouts/intervals. Runs
+    // AFTER settle, so clearing timers can't starve lazyload.
+    await page.evaluate(async () => {
+      const vids = [...document.querySelectorAll('video')];
+      await Promise.all(vids.map((v) => new Promise((res) => {
+        try {
+          v.pause();
+          v.removeAttribute('autoplay');
+          if (v.readyState >= 1) { v.currentTime = 0; }
+          if (v.seeking) { v.addEventListener('seeked', () => res(), { once: true }); setTimeout(res, 1500); }
+          else { setTimeout(res, 200); }
+        } catch { res(); }
+      })));
+      let id = window.setTimeout(() => {}, 0);
+      while (id-- > 0) { window.clearTimeout(id); window.clearInterval(id); }
+    });
+    // Carousel t=0 determinism: clicking the first slick-convention dot resets BOTH sides to slide 1 (transitions are
+    // frozen, so the reset is instant and symmetric); timers are cleared again because slick re-arms its autoplay.
+    await page.evaluate(() => {
+      const dot = document.querySelector('.slick-dots li:first-child button');
+      if (dot) {
+        dot.click();
+        let id = window.setTimeout(() => {}, 0);
+        while (id-- > 0) { window.clearTimeout(id); window.clearInterval(id); }
+      }
+    });
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.waitForTimeout(800);
+
+    // Font-load assertion (F-B2 companion): a webfont that failed to fetch renders the ENTIRE capture in fallback type
+    // with no error anywhere. Not a hard exit: source-fidelity-gate.md § Hardening rule 14 owns the decision procedure.
+    const failedFonts = await page.evaluate(async () => {
+      await document.fonts.ready;
+      return [...new Set([...document.fonts].filter((f) => f.status === 'error').map((f) => f.family))];
+    }).catch(() => []);
+    if (failedFonts.length) {
+      warn(`stitch-shot WARNING: FONT LOAD FAILED for declared face(s) ${failedFonts.join(', ')} — this capture renders fallback type (silent false measurement, F-B2 class). Verify the face loads in a real browser: instrument-induced → fix the capture before gating; genuinely broken on the live site → log as capture-state.`);
+    }
+    // --freeze-baseline never freezes a capture whose fonts failed (the caller refuses, nothing written).
+    if (opts.freezeBaseline && failedFonts.length) return { pngBuf: null, failedFonts, denialCheck };
+
+    // Height is measured AFTER the settle pass, never before: entrance-animated sites inflate scrollHeight until
+    // elements go inview (recorded: 3183px pre-settle vs 3093px settled).
+    const totalH = await page.evaluate(() => Math.max(document.body.scrollHeight, document.documentElement.scrollHeight));
+    if (!totalH || totalH < 10) throw new Error(`page height ${totalH}px — blank render? (bot challenge / hidden body)`);
+
+    const chunks = [];
+    let y = 0;
+    let prevActualY = null;
+    while (y < totalH) {
+      const target = chunkTarget(y, totalH, opts.vh);
+      await page.evaluate((ty) => window.scrollTo(0, ty), target);
+      await page.waitForTimeout(450);
+      // wait for in-viewport images to complete (max 3s per chunk)
+      await page.evaluate(async () => {
+        const t0 = Date.now();
+        const pend = () => [...document.querySelectorAll('img')].some((i) => {
+          const r = i.getBoundingClientRect();
+          return r.bottom > 0 && r.top < innerHeight && r.width > 10 && (!i.complete || i.naturalWidth === 0);
+        });
+        while (pend() && Date.now() - t0 < 3000) await new Promise((r) => { setTimeout(r, 150); });
+      });
+      const actualY = await page.evaluate(() => window.scrollY);
+      // Scroll-stall guard: on inner-scroller / scroll-jacked pages window.scrollTo is a NO-OP and every chunk would
+      // capture the top viewport (silent black bands). The 4px slack absorbs fractional-pixel scroll rounding.
+      if (scrollStalled(prevActualY, actualY, target)) {
+        throw new Error(`scroll stall at chunk target ${target}px: window scroll is a no-op (window.scrollY stuck at ${actualY}px) while the document reports ${totalH}px — likely an inner scroll container / scroll-jacked layout (html/body overflow:hidden). Stitched capture cannot measure this page class (capturing the inner scroller is future work): record the page as gate-blocked for the pixel probe and rely on content-diff/visual-diff.`);
+      }
+      prevActualY = actualY;
+      const buf = await page.screenshot();
+      chunks.push({ y: actualY, buf });
+      y += opts.vh;
+    }
+    if (watch) notReady(null);
+
+    const outPng = new PNG({ width: opts.width, height: totalH });
+    outPng.data = stitchRows(chunks.map(({ y: cy, buf }) => ({ y: cy, img: PNG.sync.read(buf) })), opts.width, totalH);
+    return { pngBuf: PNG.sync.write(outPng), height: totalH, chunks: chunks.length, denialCheck, failedFonts };
+  } finally { if (watch) watch.stop(); }
+}
+
+/** The capture record beside <out.png> (the CLI and gate-all write the same shape). */
+export const captureRecord = (url, opts, r) => ({ writtenBy: 'skills/replica/scripts/stitch-shot.mjs', url, width: opts.width, vh: opts.vh, height: r.height, chunks: r.chunks, denialCheck: r.denialCheck, at: new Date().toISOString() });
 
 async function main() {
   // The browserless subcommands gate.sh calls (HELP § Origin baseline) — before parseArgs, which needs <url> <out.png>.
@@ -443,184 +581,38 @@ async function main() {
   const browser = opts.headed ? await launchStealthHeaded(chromium) : await chromium.launch();
   try {
     // UA + standard headers + webdriver spoof on the context (live-session).
-    const ctx = await newLiveContext(browser, {
-      ua: opts.ua, locale: opts.locale,
-      viewport: { width: opts.width, height: opts.vh },
-    });
-    const page = await ctx.newPage();
-    // Challenge/blocked interstitial → loud BotChallengeError (exit 3); a
-    // challenge page must never be stitched as if it were the source.
-    // solveWindow only under --headed: headless clearance never lands, and
-    // the solve loop would spend the Akamai block budget (1 hit vs up to 4).
-    const entry = await gotoLive(page, url, { waitUntil: 'domcontentloaded', timeoutMs: opts.timeout, settleMs: 0, solveWindow: opts.headed });
-    await page.waitForTimeout(opts.wait);
-    // --no-dismiss: the capture shows whatever the site shows (the gate's --no-dismiss reaches both sides).
-    if (opts.noDismiss) console.log('overlays left as the page shows them (--no-dismiss)');
-    else await dismissAndLog(page, url, opts);
-
-    if (opts.settle) {
-      // Slow-scroll settle: fires scroll-triggered lazy loaders the way a real
-      // visit does. Do NOT force data-src→src swaps: on CDN-defended sites the
-      // forced rendition requests 403 and produce broken-image icons — worse
-      // than the site's own designed placeholders. Ground truth is the page as
-      // observable by this instrument (capture-state policy).
-      await page.evaluate(async () => {
-        for (let y = 0; y <= document.body.scrollHeight; y += 300) {
-          window.scrollTo(0, y);
-          await new Promise((r) => { setTimeout(r, 220); });
-        }
-      });
-      await page.waitForTimeout(3000);
-      // Timed marketing/newsletter modals (CH-1) often fire DURING the settle
-      // window — sweep again so a late interstitial isn't baked into the
-      // stitched capture (recorded: a fashion retailer's "Sign up, stay updated!").
-      if (!opts.noDismiss) await dismissAndLog(page, url, opts);
-    }
-
-    // A denial page a script rendered after domcontentloaded (gotoLive read the entry): exit 3, no PNG, no sidecar.
-    const denialCheck = await recheckDenial(liveSession, page, url, entry.status());
-
-    // Freeze animations/transitions/carets for stable chunks — AFTER settle.
-    await page.addStyleTag({ content: '*,*::before,*::after{animation-play-state:paused!important;transition:none!important;caret-color:transparent!important;scroll-behavior:auto!important;}html{scroll-behavior:auto!important}' });
-    // The CSS freeze above stabilizes CSS animations only (an energy-company replica run,
-    // 2026-08-26 — field-validated instrument fix). It does NOT stop
-    // (a) <video> playback — autoplaying teaser videos capture an arbitrary
-    // frame per run, so the same page never pixel-matches itself; (b) JS-timer
-    // carousels (slick autoplay swaps slides between/during chunk captures
-    // even with transition:none). Fix, applied symmetrically to both sides:
-    // pause every video and seek it to t=0 (frame 0 is deterministic), and
-    // clear all pending timeouts/intervals so timer-driven UI stops mutating
-    // mid-capture. Runs AFTER settle, so clearing timers can't starve
-    // lazyload — the settle pass already ran.
-    await page.evaluate(async () => {
-      const vids = [...document.querySelectorAll('video')];
-      await Promise.all(vids.map((v) => new Promise((res) => {
-        try {
-          v.pause();
-          v.removeAttribute('autoplay');
-          if (v.readyState >= 1) { v.currentTime = 0; }
-          if (v.seeking) { v.addEventListener('seeked', () => res(), { once: true }); setTimeout(res, 1500); }
-          else { setTimeout(res, 200); }
-        } catch { res(); }
-      })));
-      let id = window.setTimeout(() => {}, 0);
-      while (id-- > 0) { window.clearTimeout(id); window.clearInterval(id); }
-    });
-    // Carousel t=0 determinism (same field run): autoplay advances during the
-    // settle window, so each capture lands on an arbitrary slide (the replica
-    // freeze policy is slide 1 at t=0). Clicking the first slick-convention
-    // dot resets BOTH sides to slide 1 — transitions are already frozen, so
-    // the reset is instant and symmetric; no-op on pages without the
-    // convention. Took the residual 4% → 0.8% in the field.
-    await page.evaluate(() => {
-      const dot = document.querySelector('.slick-dots li:first-child button');
-      if (dot) {
-        dot.click();
-        // slick can re-arm its autoplay interval on interaction, and the
-        // chunk loop below is long — clear timers again after the click so
-        // nothing mutates mid-capture.
-        let id = window.setTimeout(() => {}, 0);
-        while (id-- > 0) { window.clearTimeout(id); window.clearInterval(id); }
-      }
-    });
-    await page.evaluate(() => window.scrollTo(0, 0));
-    await page.waitForTimeout(800);
-
-    // Font-load assertion (F-B2 companion): a webfont that failed to fetch
-    // renders the ENTIRE capture in fallback type — wrong wraps, wrong
-    // heights, wrong doc height — with no error anywhere, the same silent
-    // false-measurement class as capturing a challenge page. Report failed
-    // faces loudly. Not a hard exit: the instrument can't tell an
-    // instrument-induced failure (a capture defect — recorded F-B2: forced
-    // request headers killed the Typekit CORS fetch, live doc height moved
-    // 6669→6518 after the fix) from a face that genuinely fails for real
-    // browsers too (capture-state — fallback is then the truthful capture).
-    // The gate doc (source-fidelity-gate.md § Hardening rule 14) owns the
-    // decision procedure; this warning is what triggers it.
-    const failedFonts = await page.evaluate(async () => {
-      await document.fonts.ready;
-      return [...new Set([...document.fonts].filter((f) => f.status === 'error').map((f) => f.family))];
-    }).catch(() => []);
-    if (failedFonts.length) {
-      console.error(`stitch-shot WARNING: FONT LOAD FAILED for declared face(s) ${failedFonts.join(', ')} — this capture renders fallback type (silent false measurement, F-B2 class). Verify the face loads in a real browser: instrument-induced → fix the capture before gating; genuinely broken on the live site → log as capture-state.`);
-    }
+    const ctx = await newLiveContext(browser, { ua: opts.ua, locale: opts.locale, viewport: { width: opts.width, height: opts.vh } });
+    const r = await liveSession.withServedRetry(async () => {
+      const page = await ctx.newPage();
+      try { return await captureStitched(page, url, opts, { PNG }); } finally { await page.close().catch(() => {}); }
+    }, { retries: opts.eds ? opts.retries : 0, onRetry: (e, i, ms) => console.error(`stitch-shot: ${e.message} — retry ${i + 1}/${opts.retries} in ${ms} ms`) });
     // --freeze-baseline never freezes a capture whose fonts failed: a baseline in fallback type would bake the
     // wrong wraps and heights into every later round. Nothing is written — fix the capture, then re-freeze.
-    if (opts.freezeBaseline && failedFonts.length) {
-      console.error(`stitch-shot: not freezing a baseline — the capture's font load failed (${failedFonts.join(', ')}); fix the capture, then re-freeze`);
+    if (!r.pngBuf) {
+      console.error(`stitch-shot: not freezing a baseline — the capture's font load failed (${r.failedFonts.join(', ')}); fix the capture, then re-freeze`);
       process.exitCode = 2;
       return;
     }
-
-    // Height is measured AFTER the settle pass, never before: entrance-
-    // animated sites inflate scrollHeight until elements go inview (their
-    // translate3d entrance transforms extend the document; recorded: 3183px
-    // pre-settle vs 3093px settled). Pre-settle height is fake — mirror this
-    // ordering in any ad-hoc probe that reads document height.
-    const totalH = await page.evaluate(() => Math.max(document.body.scrollHeight, document.documentElement.scrollHeight));
-    if (!totalH || totalH < 10) throw new Error(`page height ${totalH}px — blank render? (bot challenge / hidden body)`);
-
-    const chunks = [];
-    let y = 0;
-    let prevActualY = null;
-    while (y < totalH) {
-      const target = chunkTarget(y, totalH, opts.vh);
-      await page.evaluate((ty) => window.scrollTo(0, ty), target);
-      await page.waitForTimeout(450);
-      // wait for in-viewport images to complete (max 3s per chunk)
-      await page.evaluate(async () => {
-        const t0 = Date.now();
-        const pend = () => [...document.querySelectorAll('img')].some((i) => {
-          const r = i.getBoundingClientRect();
-          return r.bottom > 0 && r.top < innerHeight && r.width > 10 && (!i.complete || i.naturalWidth === 0);
-        });
-        while (pend() && Date.now() - t0 < 3000) await new Promise((r) => { setTimeout(r, 150); });
-      });
-      const actualY = await page.evaluate(() => window.scrollY);
-      // Scroll-stall guard: on inner-scroller / scroll-jacked pages (html/body
-      // overflow:hidden with a scrolling wrapper) the document reports totalH px
-      // but window.scrollTo is a NO-OP — window.scrollY stays put, every chunk
-      // captures the top viewport, and the rows below stitch as zero-filled
-      // black: a silently fictitious pixel diff. Fail loud instead.
-      // Threshold is a small fractional-scroll tolerance (4px), NOT a material
-      // shortfall (vh/2): a jacked page with settled height between vh+1 and
-      // 1.5*vh puts chunk 2's clamped target at <= vh/2, which a vh/2 bar can
-      // never catch — those pages emitted silent black bands. On a legit page
-      // actualY reaches the clamped target (the last chunk's totalH - vh is
-      // reachable by construction), so the no-advance condition stays false;
-      // the 4px slack absorbs fractional-pixel scroll rounding.
-      if (scrollStalled(prevActualY, actualY, target)) {
-        throw new Error(`scroll stall at chunk target ${target}px: window scroll is a no-op (window.scrollY stuck at ${actualY}px) while the document reports ${totalH}px — likely an inner scroll container / scroll-jacked layout (html/body overflow:hidden). Stitched capture cannot measure this page class (capturing the inner scroller is future work): record the page as gate-blocked for the pixel probe and rely on content-diff/visual-diff.`);
-      }
-      prevActualY = actualY;
-      const buf = await page.screenshot();
-      chunks.push({ y: actualY, buf });
-      y += opts.vh;
-    }
-
-    const outPng = new PNG({ width: opts.width, height: totalH });
-    outPng.data = stitchRows(chunks.map(({ y: cy, buf }) => ({ y: cy, img: PNG.sync.read(buf) })), opts.width, totalH);
     mkdirSync(dirname(out), { recursive: true });
-    const pngBuf = PNG.sync.write(outPng);
     // --freeze-baseline writes baseline.png atomically (sibling temp + rename): a crash mid-write never leaves a
     // torn PNG a gate round would read as the origin. A normal capture keeps the plain write.
-    if (opts.freezeBaseline) { const tmp = `${out}.${process.pid}.tmp`; writeFileSync(tmp, pngBuf); renameSync(tmp, out); }
-    else writeFileSync(out, pngBuf);
+    if (opts.freezeBaseline) { const tmp = `${out}.${process.pid}.tmp`; writeFileSync(tmp, r.pngBuf); renameSync(tmp, out); }
+    else writeFileSync(out, r.pngBuf);
     if (opts.freezeBaseline) {
-      writeJsonAtomic(join(baselineDir, BASELINE_JSON), baselineProvenance({ url, width: opts.width, vh: opts.vh, height: totalH, settle: opts.settle, chunks: chunks.length, fontsFailed: failedFonts }));
-      console.log(`froze origin baseline in ${baselineDir}: ${BASELINE_PNG} + ${BASELINE_JSON} (${opts.width}x${totalH}px)`);
+      writeJsonAtomic(join(baselineDir, BASELINE_JSON), baselineProvenance({ url, width: opts.width, vh: opts.vh, height: r.height, settle: opts.settle, chunks: r.chunks, fontsFailed: r.failedFonts }));
+      console.log(`froze origin baseline in ${baselineDir}: ${BASELINE_PNG} + ${BASELINE_JSON} (${opts.width}x${r.height}px)`);
     }
-    if (sidecar) writeFileSync(sidecar, `${JSON.stringify({ writtenBy: 'skills/replica/scripts/stitch-shot.mjs', url, width: opts.width, vh: opts.vh, height: totalH, chunks: chunks.length, denialCheck, at: new Date().toISOString() }, null, 2)}\n`);
+    if (sidecar) writeFileSync(sidecar, `${JSON.stringify(captureRecord(url, opts, r), null, 2)}\n`);
     if (opts.checkBaseline) {
       const base = readBaselineProvenance(baselineDir);
       if (!base) console.log(`check-baseline: no frozen baseline in ${baselineDir} — freeze one first (nothing to compare)`);
       else {
-        const d = compareBaseline(base, { height: totalH });
+        const d = compareBaseline(base, { height: r.height });
         const dh = d.dHeight === null ? 'unknown' : `${d.dHeight >= 0 ? '+' : ''}${d.dHeight}px`;
         console.log(`check-baseline ${baselineDir}: Δheight ${dh} (baseline ${d.baselineHeight ?? '?'} → fresh ${d.freshHeight}; frozen ${base.capturedAt ?? 'unknown'})`);
       }
     }
-    console.log(`stitched ${out}: ${opts.width}x${totalH} from ${chunks.length} chunks`);
+    console.log(`stitched ${out}: ${opts.width}x${r.height} from ${r.chunks} chunks`);
   } finally {
     await browser.close();
   }

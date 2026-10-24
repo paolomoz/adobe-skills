@@ -27,7 +27,8 @@
  * Usage: node skills/diff/scripts/content-presence.mjs <originUrl> <edsUrl> [--width 1440]
  *        [--main <sel>[=<selEds>]] [--variable <sel,…>] [--chrome] [--json [<file>]] [--min-cut 2]
  *        [--settle-passes 4] [--max-findings 40] [--count-words <w,…>] [--plain] [--warmup <url>]
- * `presenceInventoryInPage`, `alignHeadings`, `diffPresence`, `formatReport`, `norm` are exported.
+ * `presenceInventoryInPage`, `alignHeadings`, `diffPresence`, `formatReport`, `norm`, `inventorySide`,
+ * `presenceReport` are exported (gate-all runs both sides in-process on its shared browser, #141).
  */
 import { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
@@ -326,15 +327,28 @@ export function parseArgs(argv) {
   return opts;
 }
 
-/** Inventory one side: visit + settle, presence inventory, clip inventory. */
-export async function inventorySide(browser, url, { width, locale, warmup, rootSel, variableSels, minCut, settlePasses = 4, httpError = 'measure', countWords = null, moreWords = null }) {
-  const { ctx, page } = await openPage(browser, { width, locale });
+/**
+ * Inventory one side: visit + settle, presence inventory, clip inventory. `eds` = the served page must be decorated
+ * (measure-live visit); `extra` = consent / dismiss selectors; `also(page)` measures more on the SAME load (gate-all
+ * runs unit-geometry's inventory here, #141) → `.also`.
+ */
+export async function inventorySide(browser, url, { width, locale, warmup, rootSel, variableSels, minCut, settlePasses = 4, httpError = 'measure', countWords = null, moreWords = null, eds = false, extra = [], also = null, context = null }) {
+  const { ctx, page } = context ? { ctx: null, page: await context.newPage() } : await openPage(browser, { width, locale });
   try {
-    const v = await visit(page, url, { warmup, settle: { passes: settlePasses }, httpError });
+    const v = await visit(page, url, { warmup, settle: { passes: settlePasses }, httpError, eds, extra });
     const inv = await page.evaluate(inPage(presenceInventoryInPage, countWords ? { rootSel, variableSels, countWords } : { rootSel, variableSels }, morePrelude(moreWords)));
     const clip = await page.evaluate(inPage(clipInventoryInPage, { minCut, rootSel: null, maxFindings: 400 }, morePrelude(moreWords)));
-    return { url, at: new Date().toISOString(), status: v.status, settlePasses: v.passes, ...inv, clip: { counts: clip.counts, groups: summarize(clip.findings), findings: clip.findings }, textBoxes: clip.textBoxes };
-  } finally { await ctx.close(); }
+    const more = also ? await also(page, v) : undefined;
+    return { url, at: new Date().toISOString(), status: v.status, settlePasses: v.passes, ...inv, clip: { counts: clip.counts, groups: summarize(clip.findings), findings: clip.findings }, textBoxes: clip.textBoxes, ...(also ? { also: more } : {}) };
+  } finally { if (ctx) await ctx.close(); else await page.close().catch(() => {}); }
+}
+
+/** The --json record (the CLI and gate-all write the same shape) + the diff it carries. */
+export function presenceReport(o, e, { width, variable = [], chrome = false, tier = null }) {
+  const res = diffPresence(o, e, { chrome });
+  const strip = (side) => ({ url: side.url, at: side.at, status: side.status, settlePasses: side.settlePasses, docH: side.docH, root: side.root, items: side.items, clip: { counts: side.clip.counts, groups: side.clip.groups } });
+  const out = { _provenance: { writtenBy: 'content-presence.mjs', at: new Date().toISOString(), width, variable, tier }, origin: strip(o), eds: { ...strip(e), clip: e.clip }, bands: res.bands, findings: res.findings, totals: res.totals, textBoxes: { origin: o.textBoxes, eds: e.textBoxes } };
+  return { res, out };
 }
 
 async function main() {
@@ -350,9 +364,7 @@ async function main() {
     o = await inventorySide(browser, opts.origin, { width: opts.width, locale: opts.locale, warmup: opts.warmup, rootSel: opts.main, variableSels: opts.variable, minCut: opts.minCut, settlePasses: opts.settlePasses, httpError: 'throw', countWords: opts.countWords, moreWords: opts.moreWords });
     e = await inventorySide(browser, opts.eds, { width: opts.width, locale: opts.locale, warmup: null, rootSel: opts.mainEds, variableSels: opts.variableEds, minCut: opts.minCut, settlePasses: opts.settlePasses, countWords: opts.countWords, moreWords: opts.moreWords });
   } finally { await browser.close(); }
-  const res = diffPresence(o, e, { chrome: opts.chrome });
-  const strip = (side) => ({ url: side.url, at: side.at, status: side.status, settlePasses: side.settlePasses, docH: side.docH, root: side.root, items: side.items, clip: { counts: side.clip.counts, groups: side.clip.groups } });
-  const out = { _provenance: { writtenBy: 'content-presence.mjs', at: new Date().toISOString(), width: opts.width, variable: opts.variable, tier }, origin: strip(o), eds: { ...strip(e), clip: e.clip }, bands: res.bands, findings: res.findings, totals: res.totals, textBoxes: { origin: o.textBoxes, eds: e.textBoxes } };
+  const { res, out } = presenceReport(o, e, { width: opts.width, variable: opts.variable, chrome: opts.chrome, tier });
   if (opts.json && !opts.jsonFile) console.log(JSON.stringify(out, null, 1));
   else {
     console.log(`content-presence @ ${opts.width}px (${tier}) — origin ${opts.origin} (docH ${o.docH}, ${o.items.length} items, HTTP ${o.status}) vs served ${opts.eds} (docH ${e.docH}, ${e.items.length} items, HTTP ${e.status})`);

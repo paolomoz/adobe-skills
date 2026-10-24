@@ -455,13 +455,11 @@ had one section for the whole run).
   `run-bg.mjs`, in the ordinary `gates/<slug>-<width>/` dir under the `pub<N>`
   label (a new dir would force a fresh live capture). Nothing pixel-shaped
   runs on the local harness — it feeds `qa-gate`/`block-roundtrip` only.
-- **The delivery gate is the ALL-PAGES run, four criteria — not the pixel
-  number alone** (`reference/source-fidelity-gate.md` § The all-pages
-  published-origin gate, #125): `node stardust/scripts/replica/gate-all.mjs
-  [--only <slug,…>] [--skip-existing] [--eds-host <host>]` through `run-bg.mjs`.
-  DELIVERED = pixel % ≤ 10 AND |Δh| ≤ 5 % AND 0 clipped text / controls
-  (`clip-probe`) AND 0 MISSING / HIDDEN links / headings (`content-presence`);
-  a recorded page passed the pixel bar with all of its cards clipped. Evidence
+- **The delivery gate is the ALL-PAGES run, four criteria, tiered for
+  siblings — not the pixel number alone** (`reference/source-fidelity-gate.md`
+  § The all-pages published-origin gate, #125, #141): `node
+  stardust/scripts/replica/gate-all.mjs [--only <slug,…>] [--skip-existing]
+  [--eds-host <host>]` through `run-bg.mjs`. Evidence
   and sidecars: `stardust/replica/gates/all-<width>/`; with the Phase 4
   `prototypes-<width>/` table it is the pair `gate-evidence.mjs` reads (a page
   without a row is ungated). Each cluster subagent runs `--only` over its own

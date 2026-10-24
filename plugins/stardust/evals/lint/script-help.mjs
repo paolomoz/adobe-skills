@@ -40,6 +40,7 @@ const EXEMPT = {
   'dynamics/scripts/lib.mjs': 'library: shared arg/io/playwright helpers for the dynamics instruments; no CLI',
   'dynamics/scripts/martech.mjs': 'library: martech contract + hand-off for dynamics-plan --martech; no CLI',
   'qa/scripts/lib.mjs': 'library: shared helpers for qa.mjs and its checks; no CLI',
+  'replica/scripts/gate-tier.mjs': 'library: the tiered sibling gate (roles, skeleton, sample, plan) imported by gate-all; no CLI',
   'rollout/scripts/lib.mjs': 'library: shared IO + roll-up helpers for the rollout scripts; no CLI',
   'spec/scripts/lib.mjs': 'library: shared args, config, HTML tree reader and pool for the spec stages; no CLI',
   'spec/scripts/rules.mjs': 'library: the rule format spec-knowledge evaluates for reach, impact and findings; no CLI',

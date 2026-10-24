@@ -3,7 +3,9 @@
 // criteria (pixel, height, clip + allowance, content), n/a content never fails a page, required vs advisory
 // units, pixelOnlyPass vs pass (the calibration pair), reasons text, overrides shown beside the number;
 // formatSummary (header, calibration line, one row per page, asymmetric-origin flag); parseArgs defaults and
-// --out derived from --width; --help in an empty cwd; pixel-compare's textBoxPct over a synthetic diff.
+// --out derived from --width; --help in an empty cwd; pixel-compare's textBoxPct over a synthetic diff. And (#141)
+// the structural row (height from the probes, skeleton, no pixel criterion), totals by gate tier, the published
+// selection without a state copy (deployed, or migrated with a state / coverage URL) and the delivered-document URL.
 // Run: node <this file>.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -11,7 +13,7 @@ import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { formatSummary, parseArgs, verdict } from '../gate-all.mjs';
+import { formatSummary, parseArgs, plainUrl, selectPages, totalsOf, verdict } from '../gate-all.mjs';
 
 // pixel-compare imports pngjs at module level (a project devDependency, absent in the plugin checkout):
 // import it lazily and skip its one check where it does not resolve, like the other browser/dep-bound tests.
@@ -92,6 +94,47 @@ if (textBoxPct) check('pixel-compare textBoxPct: differing pixels counted inside
   assert.equal(r.boxes, 1); assert.equal(r.pixels, 16); assert.equal(r.pct, 12.5);
   masked[1] = 1;
   assert.equal(textBoxPct({ data }, [{ x: 0, y: 0, w: 4, h: 4 }], w, h, masked).pct, 0);
+});
+check('structural row (#141): no pixel criterion, height from docH, skeleton escalates, probe error is not measured', () => {
+  const ok = verdict({ clip: clip(0), content: content(0, 0), structural: { originH: 10000, edsH: 10100, skeleton: { ok: true } } });
+  assert.equal(ok.pass, true); assert.equal(ok.pixelPass, null); assert.equal(ok.pixelOnlyPass, null); assert.equal(ok.heightDelta, -100); assert.equal(ok.heightSource, 'docH');
+  const tall = verdict({ clip: clip(0), content: content(0, 0), structural: { originH: 10000, edsH: 10600, skeleton: { ok: true } } });
+  assert.equal(tall.pass, false); assert.match(tall.reasons[0], /Δh -600px > 5% of 10000 \(docH\)/);
+  const sk = verdict({ clip: clip(0), content: content(0, 0), structural: { originH: 100, edsH: 100, skeleton: { ok: false, reason: 'new block/variant hero(dark)' } } });
+  assert.equal(sk.pass, false); assert.match(sk.reasons.join(), /skeleton: new block\/variant hero\(dark\)/);
+  const err = verdict({ content: { error: 'origin bot challenge' }, structural: { originH: null, edsH: 900 } });
+  assert.equal(err.pass, false); assert.match(err.reasons[0], /height not measured/);
+});
+check('totalsOf: structural rows are gated, not errors; tier counts; formatSummary names the gate', () => {
+  const rows = [
+    { slug: 'a', path: '/a', gateTier: 'full', tierReason: 'archetype', pct: 2, heightDelta: 0, pixelPass: true, heightPass: true, pixelOnlyPass: true, pass: true, reasons: [] },
+    { slug: 'b', path: '/b', gateTier: 'structural', tierReason: 'sibling', pct: null, originH: 900, heightDelta: 3, heightSource: 'docH', heightPass: true, pixelOnlyPass: null, pass: true, reasons: [] },
+    { slug: 'c', path: '/c', gateTier: 'full', tierReason: 'sample: random', pct: 12, heightDelta: 0, pixelPass: false, heightPass: true, pixelOnlyPass: false, pass: false, reasons: ['pixel 12% > 10%'] },
+    { slug: 'd', path: '/d', gateTier: 'structural', tierReason: 'sibling', pct: null, originH: null, heightPass: false, pass: false, reasons: ['height not measured (probe error)'], error: 'probe error' },
+  ];
+  const t = totalsOf(rows);
+  assert.deepEqual([t.pages, t.pass, t.fail, t.error, t.full, t.structural, t.structuralPass, t.sampled, t.failPixel, t.failHeight], [4, 2, 1, 1, 2, 2, 1, 1, 1, 0]);
+  const md = formatSummary({ _provenance: { writtenAt: 'now', breakpoint: 360, verdict: 'V' }, totals: t, rows });
+  assert.match(md, /\| `\/b` \|.*\| structural \|.*\| structural \| 3 \(docH\) \|.*PASS \(structural\)/); assert.match(md, /full \(sample\)/); assert.match(md, /Tiers: \*\*2 full\*\* \(1 sampled, 0 escalated\) \/ \*\*2 structural\*\* \(1 PASS\)/);
+});
+check('selectPages: deployed, or migrated with a state or coverage URL — no state copy, never a page state did not migrate; templates from coverage first', () => {
+  const st = [
+    { slug: 'a', url: 'https://o.test/a', status: 'deployed', liveUrl: 'https://e.test/a', template: '/a' },
+    { slug: 'b', url: 'https://o.test/b', status: 'migrated', template: '/b/post' },
+    { slug: 'c', url: 'https://o.test/c', status: 'migrated', template: '/c' },
+    { slug: 'd', url: 'https://o.test/d', status: 'approved', template: '/d' },
+  ];
+  const cov = [{ slug: 'b', path: '/b', templateId: 'b-post', delivery: { status: 'verified', deployedUrl: 'https://e.test/b' } }, { slug: 'c', delivery: { status: 'pending', deployedUrl: null } }, { slug: 'd', delivery: { status: 'deployed', deployedUrl: 'https://e.test/d' } }];
+  const sel = selectPages(st, cov);
+  assert.deepEqual(sel.map((p) => p.slug), ['a', 'b'], 'c has no delivered URL; d is not migrated in state (a redirect source the coverage still lists)');
+  assert.equal(sel[1].liveUrl, 'https://e.test/b'); assert.equal(sel[1].deployedPath, '/b'); assert.deepEqual(sel[1].templates, ['b-post', '/b/post']);
+});
+check('plainUrl and parseArgs (#141 flags): the delivered document, --sample all turns tiers off, legacy concurrency aliases', () => {
+  assert.equal(plainUrl('https://e.test/blog/x'), 'https://e.test/blog/x.plain.html'); assert.equal(plainUrl('https://e.test/'), 'https://e.test/index.plain.html');
+  const o = parseArgs(['node', 'x']); assert.equal(o.tiered, true); assert.equal(o.sample, 2); assert.equal(o.seed, '1440'); assert.equal(o.concurrency, 3); assert.equal(o.retries, 4);
+  const p = parseArgs(['node', 'x', '--sample', 'all', '--probe-concurrency', '4', '--consent', '.deny', '--dismiss', '#bar,#x']);
+  assert.equal(p.tiered, false); assert.equal(p.concurrency, 4); assert.equal(p.consent, '.deny'); assert.deepEqual(p.dismiss, ['#bar', '#x']);
+  assert.equal(parseArgs(['node', 'x', '--no-probes']).tiered, false); assert.equal(parseArgs(['node', 'x', '--stage', 'prototype']).tiered, false);
 });
 check('--help exits 0 in an empty cwd and writes nothing', () => {
   const cwd = mkdtempSync(join(tmpdir(), 'gate-all-help-'));

@@ -393,8 +393,8 @@ quarter visible is playing (`!paused`, `currentTime` advancing — not merely
 present), a rotating carousel advances without interaction.
 
 **Published-origin gate over the roster (#125).** `verify` proves the pages render; the
-DELIVERY verdict is replica's `gate-all.mjs` (pixel + height + clip + content per deployed page,
-`../replica/reference/source-fidelity-gate.md` § The all-pages published-origin gate).
+DELIVERY verdict is replica's `gate-all.mjs` (pixel + height + clip + content per deployed page;
+siblings tiered, #141 — `../replica/reference/source-fidelity-gate.md` § The all-pages published-origin gate).
 `update-coverage.mjs --gate stardust/replica/gates/all-<w>/summary.json` writes each row into
 `delivery.gate` and flips a failing page to `failed`; `verify` never marks it `verified` while the
 gate fails — completion derives from one place, never from the pixel number alone. In C-deliver

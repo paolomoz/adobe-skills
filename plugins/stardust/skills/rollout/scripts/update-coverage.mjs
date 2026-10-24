@@ -10,7 +10,7 @@
  * Block:  node update-coverage.mjs --block <id> --status <s> [--eds-name <name>]
  * Gate:   node update-coverage.mjs --gate stardust/replica/gates/all-<w>/summary.json
  *   writes each row's verdict into the page's `delivery.gate` {pass, pct, heightDelta, clipped, content,
- *   reasons, table, at} and flips a failing page (no documented override) from deployed / verified to
+ *   reasons, gateTier (full | structural, #141), table, at} and flips a failing page (no documented override) from deployed / verified to
  *   `failed` (error `gate: <reasons>`), a passing one out of that failure back to `deployed`; verify.mjs
  *   never marks a page `verified` while its `delivery.gate.pass` is false (#125 — completion derives
  *   from one place: a page the pixel table failed cannot read as verified).
@@ -199,7 +199,7 @@ if (gateFile) {
     matched += 1;
     p.delivery = p.delivery || {};
     const pass = !!(r.pass || r.override);
-    p.delivery.gate = { pass, pct: r.pct, heightDelta: r.heightDelta, clipped: r.clipped ?? null, content: r.content || null, reasons: r.reasons || [], override: r.override ? r.override.verdict : null, table: gateFile, at: now };
+    p.delivery.gate = { pass, pct: r.pct, heightDelta: r.heightDelta, clipped: r.clipped ?? null, content: r.content || null, reasons: r.reasons || [], override: r.override ? r.override.verdict : null, ...(r.gateTier ? { gateTier: r.gateTier } : {}), table: gateFile, at: now };
     if (!pass && ['deployed', 'verified'].includes(p.delivery.status)) { p.delivery.status = 'failed'; p.delivery.error = `gate: ${(r.reasons || []).join('; ') || 'FAIL'}`; flipped += 1; }
     else if (pass && p.delivery.status === 'failed' && /^gate: /.test(p.delivery.error || '')) { p.delivery.status = 'deployed'; p.delivery.error = null; flipped += 1; }
   }

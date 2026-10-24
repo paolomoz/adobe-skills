@@ -3,14 +3,15 @@
 // keyed() stable keys (role:text, role:selector#ordinal, #2 for duplicates), alignUnit pairs by key, by text
 // prefix, across relaxed roles (link ↔ button), images by order whatever their alt, leftover text by position
 // (the session-variable badge), reports Δx/Δy/Δw/Δh relative to the unit, flags off / hidden / missing / extra
-// and the unit size; verdictOf totals; parseArgs; --help in an empty cwd. Run: node <this file>.
+// and the unit size; verdictOf totals; parseArgs; the origin cache keyed per slug and width + unitsReport's shape
+// (#141), a family absent from the origin page n/a; --help in an empty cwd. Run: node <this file>.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { alignUnit, compareUnits, formatUnits, keyed, parseArgs, verdictOf } from '../unit-geometry.mjs';
+import { alignUnit, cacheUsable, compareUnits, formatUnits, keyed, parseArgs, unitCacheKey, unitsReport, verdictOf } from '../unit-geometry.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = join(HERE, '..', 'unit-geometry.mjs');
@@ -59,6 +60,19 @@ check('compareUnits pairs units by index and reports a side without visible unit
 check('parseArgs: repeatable --unit with and without the served selector', () => {
   const o = parseArgs(['node', 'x', 'https://o/', 'https://e/', '--unit', '.a=.b', '--unit', '.c', '--n', '3', '--tol', '2', '--slug', 's']);
   assert.deepEqual(o.units, [{ origin: '.a', eds: '.b' }, { origin: '.c', eds: '.c' }]); assert.equal(o.n, 3); assert.equal(o.tol, 2); assert.equal(o.slug, 's');
+});
+check('origin cache per slug AND width (#141): another width or a legacy record is never read; unitsReport keeps the CLI shape', () => {
+  assert.equal(unitCacheKey('post-a', 360), 'post-a-units-360');
+  const rec = { width: 1440, bySel: { '.card': { matches: 1, units: [] } } };
+  assert.equal(cacheUsable(rec, ['.card'], 1440), true); assert.equal(cacheUsable(rec, ['.card'], 360), false);
+  assert.equal(cacheUsable({ bySel: rec.bySel }, ['.card'], 1440), false, 'a legacy record has no width'); assert.equal(cacheUsable(rec, ['.card', '.row'], 1440), false);
+  const inv = (url) => ({ url, at: 't', docH: 100, bySel: { '.c': { matches: 0, units: [] } } });
+  const r = unitsReport(inv('o'), inv('e'), [{ origin: '.c', eds: '.c', required: true }], { tol: 4, n: 1, width: 360 });
+  assert.deepEqual(Object.keys(r), ['_provenance', 'origin', 'eds', 'results', 'verdict']); assert.equal(r._provenance.width, 360);
+  assert.equal(r.verdict.errors, 0, 'a family with no match on the origin page does not apply: n/a, not an error');
+  assert.match(r.results[0].na, /not on the origin page/); assert.match(formatUnits(r.results, 4), /n\/a — not on the origin page/);
+  const served0 = unitsReport({ url: 'o', at: 't', docH: 1, bySel: { '.c': { matches: 2, units: [{ index: 0, path: 'x', rect: {}, elements: [] }] } } }, inv('e'), [{ origin: '.c', eds: '.c' }], { tol: 4, n: 1, width: 360 });
+  assert.equal(served0.verdict.errors, 1, 'on the origin, not on the served page: still an error');
 });
 check('--help exits 0 in an empty cwd and writes nothing', () => {
   const cwd = mkdtempSync(join(tmpdir(), 'unit-geometry-help-'));

@@ -4,6 +4,70 @@ This file starts at 0.14.0. Prior versions (0.3.0 – 0.13.1) are documented in
 git history only (plus the branch-scoped notes in
 `CHANGELOG-redesign-adobecom.md` and `CHANGELOG-delivery-media-fidelity.md`).
 
+## 0.36.0 — the all-pages gate at template scale: one load per side, served pages shot decorated, siblings tiered (#141)
+
+Field learning (a recorded replica rollout, 93 delivered pages, 8 templates): the published-origin gate, not delivery,
+was the bottleneck — a C-final all-pages run took 95–110 min per width with the served side re-shot (47–56 min reusing
+every capture), clusters of 9–10 siblings spent 2–3.5 h wall mostly gating and re-shooting. Profile of 0.35.0 over 6
+pages (3 archetypes, 3 siblings) × 2 widths: 730 s at 1440, 633 s at 360; summed per stage (1440 / 360): content-presence
+517 / 543 s, unit-geometry 515 / 304 s (the probe phase was 74 % of the wall: each probe loaded and slow-scroll-settled
+both sides again), origin stitch 354 / 358 s, served stitch 295 / 291 s, pixel-compare 16 / 6 s; browser launches
+~0.1 s (Chromium) / ~0.25 s (Chrome) + ~0.2 s module import, 4 per page and width — under 2 % of the time.
+
+- **Traps fixed.** unit-geometry's origin cache is keyed per slug AND width (`<slug>-units-<width>.json`, a record of
+  another width or the legacy key never read — a 360 run had read the 1440 inventory: false `units off` on 8–14 pages). A
+  family with no DOM match on the ORIGIN page does not apply there: `n/a`, no longer an error that failed the page
+  (surfaced once the template match stopped depending on a hand-made state copy: a guide layout without the related
+  rail).
+  The served side is measured decorated or not at all: `live-session.mjs` `watchServed` / `edsReady` /
+  `readinessReason` / `withServedRetry` (a 429 / 5xx document, style, script or font on the served host, or a section or
+  block not `loaded`, is retried with jittered back-off, then `EdsNotReadyError`); stitch-shot `--eds [--retries 3]`
+  (exit 5, no PNG), measure-live `visit({ eds })`; in gate-all a 429 pauses every worker's served loads for the
+  back-off (the edge limits the host, not the page; `--retries 4`), a row still unmeasurable is `error`, never FAIL, and
+  a stale capture is never compared beside a failed one. gate-all passes `--consent` / `--dismiss` to both sides of every capture and probe
+  (0.34.6's built-ins already click a CookieHub-class "Allow all"; a site that must be denied, or its own sticky bar,
+  is the flag). Selection reads `state.json` directly: `deployed`, or `migrated` with a delivered URL (state `liveUrl`,
+  else the coverage row) — no hand-made state copy; unit families match the coverage `templateId` and the state
+  `template`.
+- **Per-page cost.** Workers keep their browsers and contexts across pages (stitch-shot's capture is exported as
+  `captureStitched`); the probes run in-process on ONE load per side — content-presence's `inventorySide` measures the
+  unit inventories on the same settled page (`unitsOnPage`), clip comes from that load — and write the CLIs' JSON
+  shapes (`presenceReport`, `unitsReport`). Origin: the frozen baseline (#138) when present; the origin probe inventory
+  is cached in the page dir under `--skip-existing`. Same 6 pages, all full rows: 392 s at 1440, 387 s at 360 (−46 %,
+  −39 %); per page 49 s origin stitch, 48 s served stitch, 38 + 38 s probes (was 172 s). Verdicts equal on all 12 rows
+  (pixel within 0.25 points, Δh equal).
+- **The tiered sibling gate** (contract — `replica/reference/source-fidelity-gate.md` § The all-pages published-origin
+  gate; pointers: handoff-contract § 1 row 5, rollout Phase C, replica Phase 5): `replica/scripts/gate-tier.mjs`
+  (library) resolves archetypes (`_meta.json`, a sibling-variance JSON via `--variance`, the state template group),
+  reads the delivered block skeleton (`<path>.plain.html`) and plans the tier: the sample is the fewest siblings whose
+  full rows cover every block / variant the archetype lacks (a first draft escalated every sibling carrying one — on a
+  rollout whose clusters each added their own variant classes that was 60 of 72 siblings), one per state variant, and
+  `--sample` more by a seeded order; a sampled pixel FAIL escalates every structural sibling of that archetype. gate-all
+  runs archetypes and uniques first, then each archetype's siblings; rows carry `gateTier` + `tierReason`, totals and
+  `summary.md` the tier counts, `_provenance.timing` the seconds per stage; gate-evidence reads a structural row as
+  `gated (structural, …)`, update-coverage writes `delivery.gate.gateTier`. `--sample all` restores full rows everywhere.
+- **Calibration of the default `--sample 2`** (every row of the recorded rollout's gate history, 429 distinct rows,
+  both widths): 31 pixel failures, 16 also flagged by a structural criterion; of the 15 that were not, 6 were archetypes
+  (full rows anyway), 6 fell in one cluster run where the template CSS was wrong on 6 of 8 siblings (any 3 draws of 8
+  hit one, and that FAIL escalates the archetype's siblings), 3 were isolated siblings 0.5–0.9 points over the bar (the
+  accepted residual, at a 1-in-3-to-4 draw chance each). The probes' document height matched the stitched height on 186 of 186 final rows
+  (0 disagreements on the 5 % height bar).
+- **Field run** (the same project, 93 pages, default tiers, 3 workers). Served side re-shot (`--skip-existing
+  --recapture-eds`): 1440 2865 s (62 full / 31 structural), 360 3051 s (59 / 34) — C-final took 110 / 95 min for the same
+  re-shoot. Re-gate reusing captures (`--skip-existing`): 1041–1063 s / 1127 s — C-final 47 / 56 min. Per width: 21 archetypes
+  and uniques full; of 72 siblings 27 drawn by the sample (cover rows for the clusters' own variant classes + one per
+  variant + 2), 5 full for another block order, 9 / 6 escalated by their structural row (documented content / units
+  residuals), the rest structural PASS; 0 sampled pixel FAILs. Verdicts: delivered (PASS or documented override) 93 / 93
+  at both widths, strict PASS 91–92 / 93 and 93 / 93 — the differences are a documented marquee ticker whose HIDDEN 2
+  flips between runs. The first run also caught a regression introduced after C-final: a link audit's href repoint
+  had switched a card variant off (12.92 % at 360, +149 px; MISSING 3) — fixed in the project, re-gated. A dropped
+  served connection (`net::ERR_CONNECTION_*`) is retried like a 429.
+- Tests: `test/gate-tier.test.mjs` (new), `test/gate-all.test.mjs` (structural verdict, totals by tier, selection,
+  `plainUrl`, flags), `test/gate-evidence.test.mjs` (a structural row), `test/stitch-shot.test.mjs` (exit 5, `--eds`),
+  `diff/scripts/test/live-session.test.mjs` (readiness, back-off, retry), `diff/scripts/test/unit-geometry.test.mjs`
+  (cache key, report shape). Prose delta −16 words (the gate section's anecdote and calibration paragraph folded into
+  their CHANGELOG entries, replica SKILL.md's second telling of the four criteria folded).
+
 ## 0.35.0 — the template encoder is project code in the AEM importer convention, fed by the page's structured source (#140)
 
 Field learning (a recorded replica rollout of a CMS-backed site, 8 templates, ~80 sibling pages): every cluster wrote its
