@@ -12,6 +12,9 @@
  *   --json       print { complete, gaps[], liveChecked } instead of one line per gap
  *   --parity     dynamics parity file (default stardust/dynamics/parity.json; absent = no list gap)
  *   --dynamics-report  replay report (default stardust/qa/dynamics-report.json)
+ *   --content    authored content tree (default content; absent = no link gap)
+ *   --source-host  source host(s) for the link pass (default rollout.json site.sourceUrl)
+ *   --redirects  redirects file for the link pass (default stardust/redirects.tsv when present)
  *
  * Gaps, one per line in this order; complete = none:
  *   pages_unfinished:N             coverage rows not yet verified (pending, content-pending, converting, deployed, stale)
@@ -28,13 +31,17 @@
  *                                  passing `runtime-list` result in stardust/qa/dynamics-report.json, or that report
  *                                  missing / older than the parity file: a list copied into the documents is not
  *                                  delivered (dynamics triage rule 10, #144)
+ *   links_localizable:N: <pages>   links `localize-links.mjs --check` would rewrite (exit 2): a source-host href
+ *                                  whose target is now a delivered page, or an internal href not in its served
+ *                                  form — the wave close was skipped (rollout Phase C § Wave close, #145)
  *   rollout_incomplete             the last stardust:rollout I-dashboard ledger line is not an `end`
+ * Not a gap: `links_to_source:n (t targets)` — source-host links still kept absolute (the repoint ledger).
  *
  * Exit: 0 complete · 1 gaps · 2 usage (no coverage/pages.json; no live host and no --offline).
  */
 import { readFileSync, existsSync, realpathSync, statSync } from 'node:fs';
-import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readJSON, isSourceParity, publicUrl } from './lib.mjs';
 
 const UNFINISHED = new Set(['pending', 'content-pending', 'converting', 'deployed', 'stale']);
@@ -97,7 +104,22 @@ export function dynamicListsGap({ parity = null, report = null, parityAt = 0, re
   return open.length ? `dynamic_lists:${open.length}: ${listed(open.map((f) => f.id))}` : null;
 }
 
-export function doneGaps({ pages = [], findings = [], ledgerLines = [], notLive = null, header = null, lists = null }) {
+/** The link gap, or null, from a localize-links tree pass (localizeTree): what `--check` would rewrite. */
+export function linksGap(tree) {
+  if (!tree) return null;
+  const n = tree.localized + tree.normalized;
+  return n ? `links_localizable:${n}: ${listed(tree.changed.map((d) => d.page))}` : null;
+}
+
+/** deploy's localize-links, in the plugin tree or a project copy (stardust/scripts/<skill>/). */
+async function localizeLinks() {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const p = [join(here, '..', '..', 'deploy', 'scripts', 'localize-links.mjs'), join(here, '..', 'deploy', 'localize-links.mjs')].find((x) => existsSync(x));
+  if (!p) throw new Error('localize-links.mjs not found (../../deploy/scripts/ or ../deploy/): copy the deploy skill\'s scripts next to these');
+  return import(pathToFileURL(p).href);
+}
+
+export function doneGaps({ pages = [], findings = [], ledgerLines = [], notLive = null, header = null, lists = null, links = null }) {
   const gaps = [];
   const unfinished = pages.filter((p) => UNFINISHED.has(statusOf(p)));
   if (unfinished.length) gaps.push(`pages_unfinished:${unfinished.length}`);
@@ -108,6 +130,7 @@ export function doneGaps({ pages = [], findings = [], ledgerLines = [], notLive 
   if (p1.length) gaps.push(`open_p1:${p1.length}`);
   if (header) gaps.push(header);
   if (lists) gaps.push(lists);
+  if (links) gaps.push(links);
   if (!rolloutEnded(ledgerLines)) gaps.push('rollout_incomplete');
   return { complete: gaps.length === 0, gaps, liveChecked: notLive !== null };
 }
@@ -163,11 +186,17 @@ async function main() {
   const parityFile = arg('parity', 'stardust/dynamics/parity.json'); const reportFile = arg('dynamics-report', 'stardust/qa/dynamics-report.json');
   const mtime = (f) => (existsSync(f) ? statSync(f).mtimeMs : 0);
   const lists = dynamicListsGap({ parity: readJSON(parityFile), report: readJSON(reportFile), parityAt: mtime(parityFile), reportAt: mtime(reportFile) });
-  const verdict = doneGaps({ pages, findings, ledgerLines: readLedger(LEDGER), notLive, header, lists });
+  const content = arg('content', 'content');
+  const sourceHost = arg('source-host', config.site && config.site.sourceUrl ? hostOf(config.site.sourceUrl) : null);
+  const redirects = arg('redirects', existsSync('stardust/redirects.tsv') ? 'stardust/redirects.tsv' : null);
+  const tree = sourceHost && existsSync(content) ? (await localizeLinks()).localizeTree({ content, hosts: sourceHost.split(','), redirects }) : null;
+  const verdict = doneGaps({ pages, findings, ledgerLines: readLedger(LEDGER), notLive, header, lists, links: linksGap(tree) });
+  if (tree) verdict.toSource = { links: tree.kept.length, targets: new Set(tree.kept.map((k) => k.target)).size };
 
   if (JSON_OUT) console.log(JSON.stringify(verdict));
   else {
     for (const g of verdict.gaps) console.log(g);
+    if (verdict.toSource) console.log(`links_to_source:${verdict.toSource.links} (${verdict.toSource.targets} targets) — not a gap; the repoint ledger lists them`);
     console.log(`${verdict.complete ? '✓ complete' : `✗ ${verdict.gaps.length} gap(s)`}${verdict.liveChecked ? '' : ' (live probe skipped: --offline)'}`);
   }
   process.exit(verdict.complete ? 0 : 1);

@@ -143,14 +143,9 @@ Walk `plan.json.steps` in order (representative pages first). For each page:
    a freeze the gate needed (video at frame 0, carousel on slide 1) is a behaviour to
    deliver, never the spec (`../replica/reference/recreation-procedure.md § Carousels`).
 
-   **Deploy first, judge on the preview origin.** The local harness
-   (`build-harness.mjs` → `qa-gate.mjs`, `block-roundtrip.mjs --ew`) serves the
-   structural asserts only; every pixel or visual judgment — replica's
-   source-fidelity gate, the header/footer `crop-compare` bands, the deployed
-   eyeball — runs against the page's preview URL after `PUT → preview`, never
-   against the harness before the first PUT (deploy SKILL.md § Local QA before
-   deploy, § Step 10). A recorded delivery session iterated CSS against a local
-   harness pixel diff for its whole budget and delivered no page.
+   **Deploy first, judge on the preview origin**: the local harness serves the
+   structural asserts only; every pixel or visual judgment runs on the preview URL
+   after `PUT → preview` (deploy SKILL.md § Local QA before deploy, § Step 10).
 
    **Chrome and fragment documents carry `Robots | noindex`.** `content/nav.html`,
    `content/footer.html`, every per-locale `nav-*` / `footer-*` document and any
@@ -246,23 +241,27 @@ should run the bundled, resumable driver rather than a serial loop:
 --branch <branch> --content <dir>` (concurrency pool, persistent ledger that skips
 already-live pages, retry/backoff, append-only log, delivered-`.plain.html` check).
 The driver and every batch run in the background; its log and ledger are the
-progress file. Check them at most every 4 minutes and never with a fixed `sleep`
-of 5 minutes or more (the prompt-cache window) — the master skill's wait
-discipline; recorded batch waits of 9–10 minutes re-wrote a ~650k prefix each time.
-After a transient blip, re-run the same command — it re-drives only the FAILs.
-Then reconcile the ledger into coverage with `update-coverage.mjs`.
-**Foundation first:** lint AND commit `styles.css`, header/footer CSS and the
-contract file BEFORE the first agent spawns; no token or custom-property rename
-after fan-out (a recorded rename under three running agents cost seven
-coordination messages). **Disjoint clusters spawn concurrently** — a wave waits
-only on a real dependency (a recorded second wave idled 14 min behind an
-unrelated first). **Every tool call stays under 4 minutes, the main agent's
-included** (the prompt cache holds 5; calls of 5.2 and 6.6 min re-wrote the whole
-context, and so did one 338 s foreground turn on the main agent that ran a pixel
-loop beside a deploy-batch start + wait): a long instrument (gate rounds, pixel
-loops, Playwright captures, deploy batches) goes through `run-bg.mjs start`, and
-`wait` is the NEXT tool call — it returns within its `--max` (100 s by default); never two long instruments
-as parallel tool calls in one turn, never two `wait`s in one command.
+progress file, checked at most every 4 minutes, never after a fixed `sleep` of 5
+minutes or more (the master skill's wait discipline). After a transient blip,
+re-run the same command — it re-drives only the FAILs. Then reconcile the ledger
+into coverage with `update-coverage.mjs`. **Foundation first:** lint AND commit
+`styles.css`, header/footer CSS and the contract file BEFORE the first agent
+spawns; no token or custom-property rename after fan-out. **Disjoint clusters
+spawn concurrently** — a wave waits only on a real dependency. **Every tool call
+stays under 4 minutes, the main agent's included**: a long instrument (gate
+rounds, pixel loops, Playwright captures, deploy batches) goes through
+`run-bg.mjs start`, and `wait` is the NEXT tool call (it returns within its
+`--max`); never two long instruments as parallel tool calls in one turn, never
+two `wait`s in one command.
+
+**Wave close (#145).** Every wave (a cluster unit, a sibling batch, a later batch
+of a delivered template) ends with one pass over the WHOLE tree —
+`node skills/deploy/scripts/localize-links.mjs --source-host <live-host> --content
+content --redirects stardust/redirects.tsv --ledger stardust/rollout/repointed.json
+--changed stardust/rollout/units/links-<wave>.paths` — then `deploy-batch.mjs
+--paths <that file> --force` re-PUTs only the rewritten documents. Links to the
+pages the wave shipped come home; the ledger keeps each link still on the source
+host with its reason. `done-check.mjs` fails (`links_localizable`) until it runs.
 
 ### Phase D — Site assembly (whole-site artifacts)
 
@@ -412,15 +411,9 @@ link **targets** a roster-driven batch misses
   chrome documents THEMSELVES are published — otherwise they get
   committed but never published, their links 404, and the dashboard still
   reads 100%.
-- **Localize source-site bounce links** with the deploy stage, not by hand:
-  `node skills/deploy/scripts/localize-links.mjs --source-host <live-host>
-  --content content --redirects stardust/redirects.tsv` rewrites every
-  source-host href whose path exists in the content tree (header/footer/home
-  included) to the canonical root-relative form and lists the ones it kept
-  absolute (no local page — a bounce beats a 404). **Re-run over the WHOLE
-  tree after every wave**: earlier waves' pages gain newly valid targets only
-  when a later wave ships them. `--check` is the gate (exit 2 = localizable
-  links remain).
+- **Localize source-site bounce links** with the wave close (Phase C), never by
+  hand; a repoint decision below is recorded as its ledger reason (`--reason
+  scope-extension`, `capture-gap`, …) — a bounce beats a 404.
 - **Link every internal page at its served URL** (`deploy/scripts/eds-path.mjs`):
   no `.html`, a slash only on a folder index (`/x/`). `.html` and a leaf's
   slash 404 while `.plain.html` passes. Repoint `.html` links with no local
@@ -531,6 +524,7 @@ Blocks      <B> total · <c> converted · <p> pending
 Quality     health <H>/100 · open P1 <n> / P2 <n> / P3 <n>
 Pixel table prototypes <p>/<P> PASS · deployed <d>/<D> PASS (pixel-only <x>/<D>) — gates/{prototypes,all}-1440/summary.md
 To deliver  <list of remaining slugs>
+Links       <n> to the source host (<t> targets) by reason — repointed.json
 Content     <cp> pages awaiting content track (block code deployed, document not yet pushed)
 ```
 
@@ -595,6 +589,7 @@ exits 0; otherwise it prints one gap per line.
 | `stardust/rollout/optimize/findings.json` | multi-source quality findings ledger (schema: `schemas/rollout-findings.schema.json`) |
 | `stardust/rollout/optimize/scorecard.json` | quality scorecard + history (schema: `schemas/rollout-scorecard.schema.json`) |
 | `stardust/rollout/rollout.json` | config + `lastRun` summary (schema: `schemas/rollout-config.schema.json`) |
+| `stardust/rollout/repointed.json` | the repoint ledger: links left on the source host, by reason (#145) |
 | `stardust/rollout/site/{sitemap.xml,robots.txt,manifest.json}` | site-level assembly artifacts |
 | `stardust/rollout/dashboard/{index.html,data.json}` | self-contained progress dashboard + snapshot |
 | edits to the **EDS project** (`content/**`, `styles/`) | applied by `autofix-aem` (the only files rollout writes outside `stardust/rollout/`) |

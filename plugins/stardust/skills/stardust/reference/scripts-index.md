@@ -15,7 +15,7 @@ Run the project copies under `stardust/scripts/<skill>/`. Read this before `--he
 - `deploy/file-lock.mjs` — library (lock + atomic ledger merge), no CLI
 - `deploy/eds-path.mjs` — library (path contract), no CLI
 - `deploy/ew-editability-probe.mjs` — rendered editability gate — `--content <p>.html | <url…> [--simulate-editor]`
-- `deploy/localize-links.mjs` — source hrefs → root-relative — `--source-host <h> [--content content] [--check]`
+- `deploy/localize-links.mjs` — source hrefs → root-relative; repoint ledger — `--source-host <h> [--ledger f]`
 - `deploy/martech-scaffold.mjs` — contract → martech.js + hooks — `[--contract <json>] [--dry-run] [--force]`; exit 1 = invalid/conflict/no hook
 - `deploy/qa-gate.mjs` — decoration asserts + width cap — `<harnessURL> --schema eds-schema/<p>.json [--design DESIGN.json]`
 - `deploy/render-harness.mjs` — screenshot decoration — `content/<p>.html <out.png> [<block>…] [--ew]`

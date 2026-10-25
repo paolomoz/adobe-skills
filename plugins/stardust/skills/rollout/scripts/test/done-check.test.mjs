@@ -4,7 +4,8 @@
 // live host does not serve, open P1 findings the optimize gate would count, a rollout whose last I-dashboard
 // line is not an `end`); a clean run is complete; the live probe keeps input order and treats non-200 and
 // network errors as not live; a migration project's header must be proven (header_parity: contract, comparison,
-// profile by flow, widths, live host, undecided errors); the CLI exits 0 / 1 / 2 and --offline says the probe was skipped. Offline: the
+// profile by flow, widths, live host, undecided errors); a link a wave close would still rewrite is a gap
+// (links_localizable, #145) and the links kept on the source host are counted, not gapped; the CLI exits 0 / 1 / 2 and --offline says the probe was skipped. Offline: the
 // probe runs against a stub fetch. --help writes nothing.
 // Run: node plugins/stardust/skills/rollout/scripts/test/done-check.test.mjs
 import assert from 'node:assert/strict';
@@ -13,7 +14,7 @@ import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { doneGaps, deliveredPaths, dynamicListsGap, headerGap, openP1, probeLive, rolloutEnded } from '../done-check.mjs';
+import { doneGaps, deliveredPaths, dynamicListsGap, headerGap, linksGap, openP1, probeLive, rolloutEnded } from '../done-check.mjs';
 import { SOURCE_PARITY_PREFIX, publicUrl } from '../lib.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -187,6 +188,28 @@ check('dynamicListsGap: an index-backed list proven only by link counts is a gap
   report.results[0].pass = true;
   assert.equal(dynamicListsGap({ parity, report }), null);
   assert.ok(doneGaps({ lists: 'dynamic_lists:1: F-LISTS' }).gaps.includes('dynamic_lists:1: F-LISTS'));
+});
+
+check('links_localizable: what localize-links --check would rewrite, listed by document; none is no gap (#145)', () => {
+  assert.equal(linksGap(null), null);
+  assert.equal(linksGap({ localized: 0, normalized: 0, changed: [] }), null);
+  assert.equal(linksGap({ localized: 2, normalized: 1, changed: [{ page: '/a' }, { page: '/b' }] }), 'links_localizable:3: /a, /b');
+  assert.ok(doneGaps({ links: 'links_localizable:1: /a' }).gaps.includes('links_localizable:1: /a'));
+});
+
+check('CLI: a source link to a delivered page fails until localized; kept source links are counted only', () => {
+  const proj = project();
+  writeFileSync(join(proj, 'stardust', 'rollout', 'rollout.json'), JSON.stringify({ site: { sourceUrl: 'https://www.example.com' } }));
+  mkdirSync(join(proj, 'content'), { recursive: true });
+  writeFileSync(join(proj, 'content', 'about.html'), '<a href="https://example.com/about">a</a> <a href="https://example.com/later">l</a>');
+  let r = run(proj, ['--offline']);
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /^links_localizable:1: \/about$/m);
+  writeFileSync(join(proj, 'content', 'about.html'), '<a href="/about">a</a> <a href="https://example.com/later">l</a>');
+  r = run(proj, ['--offline', '--json']);
+  assert.equal(r.status, 0, r.stdout);
+  assert.deepEqual(JSON.parse(r.stdout).toSource, { links: 1, targets: 1 });
+  rmSync(proj, { recursive: true, force: true });
 });
 
 check('CLI: usage errors exit 2 — no pages.json; no live host without --offline', () => {

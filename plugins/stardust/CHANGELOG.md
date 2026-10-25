@@ -4,6 +4,33 @@ This file starts at 0.14.0. Prior versions (0.3.0 – 0.13.1) are documented in
 git history only (plus the branch-scoped notes in
 `CHANGELOG-redesign-adobecom.md` and `CHANGELOG-delivery-media-fidelity.md`).
 
+## 0.40.0 — links re-localise at every wave close, mechanically: a repoint ledger and a done-check gap (#145)
+
+Field learning (the same recorded replica rollout, 93 delivered pages): E2 told the run to re-run `localize-links` over
+the whole tree "after every wave", but E2 runs once, at the end; a sibling cluster or a later batch of an existing
+template never passes through it. E2 repointed 526 hrefs (227 targets) to the source site because their targets were
+outside the roster, and nothing would point them back once those pages ship — the site would keep sending visitors to
+the old origin. A rewrite in the same pass (a redirect source to its destination) also flipped a block's look that
+decorate keyed on the href; only the published gate caught it.
+
+- **The rule** (rollout Phase C § Wave close; pointers: E2, deploy's tool table and link paragraph, the handoff card rows
+  C and E2): every wave ends with `localize-links.mjs … --ledger stardust/rollout/repointed.json --changed
+  <wave>.paths` over the whole tree, then `deploy-batch.mjs --paths <that file> --force` re-PUTs only the rewritten
+  documents. The E2 checklist and "re-run after every wave" lines fold into it.
+- **`localize-links.mjs`**: `--ledger` keeps every link left on the source host as `{page, href, target, reason}` with
+  counts by reason — `pending-wave` for a roster page (coverage `pages.json` beside the ledger, or `--roster`), else the
+  reason the ledger already holds (an E2 decision), else `--reason`, else `unclassified`; a shipped target leaves it
+  (`relocalized`). `--changed` writes the rewritten documents' web paths. `localizeTree` is exported (no writes).
+- **`done-check.mjs`**: gap `links_localizable:N: <pages>` — what `localize-links --check` would rewrite (source host from
+  `rollout.json` `site.sourceUrl`, `--content`, `--redirects`); `links_to_source:n` printed, not a gap.
+- **Deploy anti-pattern 21**: decorate never keys behaviour on a literal href (link maintenance rewrites it); key on an
+  authored token. The lighter option was chosen over a static scan of block JS for `href` reads.
+- Rollout Phase H reports the links still on the source host by reason. Prose delta −2 lines / −43 words (rollout
+  Phase C's anecdotes told again in the master's wait rule and the handoff card folded).
+- **Field run** (the same project): ledger built from the current tree — 271 links, 169 targets (the list items #144
+  moved out of the documents took the rest): scope-extension 248, app-route 23, pending-wave 0; the wave close was a
+  no-op (0 localizable, nothing re-PUT); done-check complete; a footer link turned absolute in a scratch copy fails it.
+
 ## 0.39.0 — dynamic content is delivered dynamic: index-backed and data-fed lists read their source at runtime (#144)
 
 Field learning (the same recorded replica rollout, 93 delivered pages): the triage dispositioned the article listings (blog

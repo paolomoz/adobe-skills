@@ -12,9 +12,8 @@
  * external or not (yet) in the migration set — that is the honest integration
  * boundary, and this tool reports it.
  *
- * What it does (idempotent — run it after EVERY generator and before EVERY
- * deploy, over the WHOLE tree, because earlier waves' pages gain newly valid
- * internal targets as later waves ship them):
+ * What it does (idempotent, over the WHOLE tree — before every write and at every
+ * wave close, rollout Phase C § Wave close, #145):
  *   1. Builds the URL map from the content tree: every *.html under --content
  *      is a page served at its URL (eds-path.mjs: extensionless; a folder index
  *      `x/index.html` at `/x/`, a leaf at `/x/y`; root `/`), plus the entries of
@@ -32,37 +31,53 @@
  * Usage:
  *   node skills/deploy/scripts/localize-links.mjs --source-host <host[,host]> \
  *        [--content content] [--redirects stardust/redirects.tsv|.json|.jsonl] \
- *        [--dry-run] [--check] [--json]
+ *        [--ledger stardust/rollout/repointed.json [--roster <pages.json>] [--reason <word>]] \
+ *        [--changed <paths-file>] [--dry-run] [--check] [--json]
  *
  *   --source-host  the live site's host(s); `www.` is matched either way
  *   --content      root of the authored content tree (default: content)
  *   --redirects    TSV `source<TAB>destination` (rollout's stardust/redirects.tsv), JSON
  *                  ([{source,destination}], {source: destination}, the DA sheet {data:[…]}),
  *                  or JSON Lines ({src,target}: spec's knowledge/redirects.jsonl)
+ *   --ledger       the repoint ledger (#145): every source-host link left absolute, rewritten
+ *                  each write run as { hosts, at, counts: {links, targets, byReason},
+ *                  links: [{page, href, target, reason}] }. reason: `pending-wave` when the
+ *                  target is a roster page (a later wave delivers it), else the reason the
+ *                  ledger already holds for that target (an E2 decision: scope-extension,
+ *                  capture-gap, source-404, app-route, other-locale…), else --reason, else
+ *                  `unclassified`. A target that has since shipped leaves the ledger (relocalized).
+ *   --roster       coverage pages.json (default: coverage/pages.json beside the ledger, when present)
+ *   --reason       the reason recorded for targets new to the ledger
+ *   --changed      write the web paths of the documents this run rewrote, one per line
+ *                  (`deploy-batch.mjs --paths <file> --force` re-PUTs exactly those)
  *   --dry-run      report what would change, write nothing
  *   --check        gate mode: write nothing, exit 2 if ANY link would change
  *                  (run the plain pass first; --check is the pre-deploy assertion)
  *   --json         machine-readable summary
  *
- * Writes: the rewritten *.html files IN PLACE under --content (nothing with
- * --dry-run or --check; the summary is stdout).
+ * Writes: the rewritten *.html files IN PLACE under --content, the --ledger and --changed files
+ * (nothing with --dry-run or --check; the summary is stdout).
  *
  * Exit codes: 0 clean (or rewritten), 2 --check found localizable links,
  * 1 usage/IO error. Dependency-free (regex over the authored HTML, the same
  * technique as davids-model-lint.mjs — content pages are machine-generated).
  */
-import { readFileSync, writeFileSync, readdirSync, statSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, readdirSync, statSync, existsSync, mkdirSync } from 'fs';
 import path from 'path';
 import { deliveredUrl, pathKey as canonicalPath } from './eds-path.mjs';
 
 function parseArgs(argv) {
   const rest = argv.slice(2);
-  const opts = { content: 'content', hosts: [], redirects: null, dryRun: false, check: false, json: false };
+  const opts = { content: 'content', hosts: [], redirects: null, ledger: null, roster: null, reason: null, changed: null, dryRun: false, check: false, json: false };
   for (let i = 0; i < rest.length; i += 1) {
     const a = rest[i];
     if (a === '--content') opts.content = rest[i += 1];
     else if (a === '--source-host') opts.hosts.push(...(rest[i += 1] || '').split(',').map((s) => s.trim()).filter(Boolean));
     else if (a === '--redirects') opts.redirects = rest[i += 1];
+    else if (a === '--ledger') opts.ledger = rest[i += 1];
+    else if (a === '--roster') opts.roster = rest[i += 1];
+    else if (a === '--reason') opts.reason = rest[i += 1];
+    else if (a === '--changed') opts.changed = rest[i += 1];
     else if (a === '--dry-run') opts.dryRun = true;
     else if (a === '--check') { opts.check = true; opts.dryRun = true; }
     else if (a === '--json') opts.json = true;
@@ -75,7 +90,7 @@ function parseArgs(argv) {
 }
 
 function usage() {
-  console.error('usage: localize-links.mjs --source-host <host[,host]> [--content content] [--redirects file] [--dry-run] [--check] [--json]');
+  console.error('usage: localize-links.mjs --source-host <host[,host]> [--content content] [--redirects file] [--ledger file [--roster pages.json] [--reason word]] [--changed file] [--dry-run] [--check] [--json]');
 }
 
 // ----------------------------------------------------------------- URL map
@@ -175,10 +190,54 @@ function processFile(file, ctx) {
   const out = src.replace(HREF_RE, (whole, pre, q, href) => {
     const r = localizeHref(href, ctx);
     if (r.action === 'localized' || r.action === 'normalized') { counts[r.action] += 1; return `${pre}${q}${r.href}${q}`; }
-    if (r.action === 'kept-absolute') kept.push(r.key);
+    if (r.action === 'kept-absolute') kept.push({ href, target: r.key });
     return whole;
   });
   return { out, changed: out !== src, counts, kept };
+}
+
+// ------------------------------------------------------------ repoint ledger (#145)
+
+/** The document's web path (deploy-batch's `--paths` form): `content/a/b.html` → `/a/b`. */
+const webPathOf = (file, root) => `/${path.relative(root, file).split(path.sep).join('/').replace(/\.html$/i, '')}`;
+
+/** Lookup keys of the roster rows (coverage pages.json `pages[].path` or `/<slug>`). Pure. */
+export function rosterKeys(pagesDoc) {
+  return new Set(((pagesDoc && pagesDoc.pages) || []).map((p) => canonicalPath(p.path || `/${p.slug || ''}`)));
+}
+
+/**
+ * The next ledger from the links kept absolute this run. Pure. `kept`: [{page, href, target}].
+ * Reason per target: a roster page → `pending-wave`; else the reason the previous ledger holds for the
+ * target; else `reason`; else `unclassified`. `relocalized`: previous targets no longer kept (shipped).
+ */
+export function nextLedger(prev, kept, { roster = new Set(), reason = null, hosts = [], at = new Date().toISOString() } = {}) {
+  const held = new Map(((prev && prev.links) || []).map((l) => [l.target, l.reason]));
+  const why = (t) => (roster.has(t) ? 'pending-wave' : (held.get(t) && held.get(t) !== 'pending-wave' ? held.get(t) : reason || 'unclassified'));
+  const links = kept.map((l) => ({ page: l.page, href: l.href, target: l.target, reason: why(l.target) }))
+    .sort((x, y) => x.target.localeCompare(y.target) || x.page.localeCompare(y.page));
+  const targets = new Set(links.map((l) => l.target));
+  const byReason = {};
+  links.forEach((l) => { byReason[l.reason] = (byReason[l.reason] || 0) + 1; });
+  const relocalized = [...new Set(held.keys())].filter((t) => !targets.has(t)).sort();
+  return { ledger: { hosts, at, counts: { links: links.length, targets: targets.size, byReason }, links }, relocalized };
+}
+
+// --------------------------------------------------------------------- tree
+
+/**
+ * One pass over the content tree, nothing written: per document the rewritten HTML, its counts and the
+ * links kept absolute. done-check reads the same pass (its links_localizable gap = `--check` exit 2).
+ */
+export function localizeTree({ content, hosts, redirects = null }) {
+  const bare = hosts.map(bareHost);
+  const files = collectHtml(content).sort();
+  const { map, redirects: nRedirects, pending } = buildMap(files, content, redirects);
+  const docs = files.map((f) => ({ file: f, page: webPathOf(f, content), ...processFile(f, { map, hosts: bare }) }));
+  const changed = docs.filter((d) => d.changed);
+  const sum = (k) => changed.reduce((n, d) => n + d.counts[k], 0);
+  const kept = docs.flatMap((d) => d.kept.map((k) => ({ page: d.page, ...k })));
+  return { hosts: bare, pages: files.length, mapEntries: map.size, redirects: nRedirects, pending, docs, changed, localized: sum('localized'), normalized: sum('normalized'), kept };
 }
 
 // --------------------------------------------------------------------- main
@@ -192,41 +251,45 @@ function main() {
     process.exit(0);
   }
   const opts = parseArgs(process.argv);
-  const hosts = opts.hosts.map(bareHost);
-  const files = collectHtml(opts.content);
-  const { map, redirects, pending } = buildMap(files, opts.content, opts.redirects);
-  const ctx = { map, hosts };
-
-  const perFile = {};
-  const keptAll = new Map();
-  let localized = 0; let normalized = 0; let filesChanged = 0;
-  for (const f of files.sort()) {
-    const r = processFile(f, ctx);
-    r.kept.forEach((k) => keptAll.set(k, (keptAll.get(k) || 0) + 1));
-    if (!r.changed) continue;
-    filesChanged += 1;
-    localized += r.counts.localized; normalized += r.counts.normalized;
-    perFile[`/${path.relative(opts.content, f).split(path.sep).join('/')}`] = r.counts;
-    if (!opts.dryRun) writeFileSync(f, r.out);
+  const t = localizeTree({ content: opts.content, hosts: opts.hosts, redirects: opts.redirects });
+  const perFile = Object.fromEntries(t.changed.map((d) => [`${d.page}.html`, d.counts]));
+  if (!opts.dryRun) t.changed.forEach((d) => writeFileSync(d.file, d.out));
+  if (!opts.dryRun && opts.changed) {
+    mkdirSync(path.dirname(opts.changed), { recursive: true });
+    writeFileSync(opts.changed, t.changed.map((d) => `${d.page}\n`).join(''));
   }
+  let ledgerNote = null;
+  if (opts.ledger) {
+    const rosterFile = opts.roster || path.join(path.dirname(opts.ledger), 'coverage', 'pages.json');
+    const roster = existsSync(rosterFile) ? rosterKeys(JSON.parse(readFileSync(rosterFile, 'utf8'))) : new Set();
+    const prev = existsSync(opts.ledger) ? JSON.parse(readFileSync(opts.ledger, 'utf8')) : null;
+    const { ledger, relocalized } = nextLedger(prev, t.kept, { roster, reason: opts.reason, hosts: t.hosts });
+    if (!opts.dryRun) { mkdirSync(path.dirname(opts.ledger), { recursive: true }); writeFileSync(opts.ledger, `${JSON.stringify(ledger, null, 2)}\n`); }
+    ledgerNote = { file: opts.ledger, ...ledger.counts, relocalized: relocalized.length };
+  }
+  const keptAll = new Map();
+  t.kept.forEach((k) => keptAll.set(k.target, (keptAll.get(k.target) || 0) + 1));
   const keptSorted = [...keptAll.entries()].sort((a, b) => b[1] - a[1]);
-  const summary = { content: opts.content, hosts, pages: files.length, mapEntries: map.size, redirects, filesChanged, localized, normalized, keptAbsolute: keptSorted.length, mode: opts.check ? 'check' : opts.dryRun ? 'dry-run' : 'write' };
+  const todo = t.localized + t.normalized;
+  const summary = { content: opts.content, hosts: t.hosts, pages: t.pages, mapEntries: t.mapEntries, redirects: t.redirects, filesChanged: t.changed.length, localized: t.localized, normalized: t.normalized, keptAbsolute: keptSorted.length, keptLinks: t.kept.length, ledger: ledgerNote, mode: opts.check ? 'check' : opts.dryRun ? 'dry-run' : 'write' };
 
   if (opts.json) {
     console.log(JSON.stringify({ ...summary, perFile, kept: keptSorted.map(([p, n]) => ({ path: p, links: n })) }, null, 2));
   } else {
     const verb = opts.dryRun ? 'would localize' : 'localized';
-    console.log(`localize-links: ${files.length} pages, ${map.size} map entries (${redirects} from redirects${pending ? `; ${pending} redirect(s) to pages not in this tree kept for a later wave` : ""}), hosts ${hosts.join(', ')}`);
-    console.log(`${verb} ${localized} source-host link(s) + normalized ${normalized} internal href(s) across ${filesChanged} file(s)${opts.dryRun ? ' [no writes]' : ''}`);
+    console.log(`localize-links: ${t.pages} pages, ${t.mapEntries} map entries (${t.redirects} from redirects${t.pending ? `; ${t.pending} redirect(s) to pages not in this tree kept for a later wave` : ''}), hosts ${t.hosts.join(', ')}`);
+    console.log(`${verb} ${t.localized} source-host link(s) + normalized ${t.normalized} internal href(s) across ${t.changed.length} file(s)${opts.dryRun ? ' [no writes]' : ''}`);
     for (const [p, c] of Object.entries(perFile)) console.log(`  ${p}: ${c.localized} localized, ${c.normalized} normalized`);
     if (keptSorted.length) {
-      console.log(`\nabsolute source-host links KEPT (target not in the migration set — the honest boundary; re-run after the wave that ships them):`);
+      console.log(`\nabsolute source-host links KEPT: ${t.kept.length} link(s) to ${keptSorted.length} target(s) not in the migration set (the honest boundary; the wave close re-runs this):`);
       keptSorted.slice(0, 20).forEach(([p, n]) => console.log(`  ${String(n).padStart(4)}  ${p}`));
       if (keptSorted.length > 20) console.log(`  … ${keptSorted.length - 20} more target(s)`);
     }
-    if (opts.check) console.log(`\nCHECK ${localized + normalized ? 'FAIL' : 'PASS'} — ${localized + normalized} link(s) still localizable`);
+    if (ledgerNote) console.log(`\nledger ${ledgerNote.file}${opts.dryRun ? ' [not written]' : ''}: ${ledgerNote.links} link(s), ${ledgerNote.targets} target(s) — ${Object.entries(ledgerNote.byReason).map(([r, n]) => `${r} ${n}`).join(', ') || 'none'}; relocalized ${ledgerNote.relocalized} target(s)`);
+    if (opts.changed && !opts.dryRun) console.log(`changed documents → ${opts.changed} (${t.changed.length}): deploy-batch.mjs --paths ${opts.changed} --force`);
+    if (opts.check) console.log(`\nCHECK ${todo ? 'FAIL' : 'PASS'} — ${todo} link(s) still localizable`);
   }
-  process.exit(opts.check && (localized + normalized) ? 2 : 0);
+  process.exit(opts.check && todo ? 2 : 0);
 }
 
 if (process.argv[1] && /localize-links\.mjs$/.test(process.argv[1])) main();
