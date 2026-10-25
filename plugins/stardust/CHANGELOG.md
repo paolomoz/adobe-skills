@@ -4,6 +4,54 @@ This file starts at 0.14.0. Prior versions (0.3.0 – 0.13.1) are documented in
 git history only (plus the branch-scoped notes in
 `CHANGELOG-redesign-adobecom.md` and `CHANGELOG-delivery-media-fidelity.md`).
 
+## 0.39.0 — dynamic content is delivered dynamic: index-backed and data-fed lists read their source at runtime (#144)
+
+Field learning (the same recorded replica rollout, 93 delivered pages): the triage dispositioned the article listings (blog
+index, library shelves, case studies, author post lists, home featured / latest) and the related-articles rails
+`index-backed`, the in-article trend shortcode `data-fed` — yet every delivery unit wrote the captured items into the
+documents ("static until an index exists"), and they stayed static after the code branch's `helix-query.yaml` built a
+93-row query index and a 60-row listing index. Nothing failed: the parity rows counted links, done-check had no notion of
+a list. A static list is wrong the day a post is published and costs an edit of every listing page per post. The
+document-first contract (#100: item rows in the document, the index only for images and top-up) was the license — its
+generator was never re-run.
+
+- **The rule** (contract — `dynamics/reference/triage.md` rule 10; pointers: dynamics Phase 4, `listings.md` § Block
+  contract, deploy #100 / #17, `ai-readability.md` § 4 rule 3, rollout D2, migrate content-preservation): an
+  `index-backed` or `data-fed` feature ships as a block that reads its source (query index, sheet, JSON endpoint) at
+  delivery time; the document carries its head, labels and query, never the items. No owner backend yet → the block
+  reads a committed snapshot, `interim`, decision named. The rule is read from the source's own data; a list the source
+  curates is a curated sheet; the index carries every field the blocks render. The document-first contract is retired;
+  readability: the page carries an authored summary, `code` excludes the list blocks, `strict` shows the cost.
+- **`dynamics-check.mjs` `runtime-list`** (new check type): fails when the block's items are in `<path>.plain.html`, when
+  the page never requests `source`, or when the rendered items differ from the rule applied to the source rows
+  (`prefix`, `filter` incl. `{self}`, `require`, `excludeSelf`, `sort` / `order`, `offset`, `limit`; a curated sheet keeps
+  source order); the items the source showed (`expectItems`) must keep their order, partial delivery reported as
+  coverage. An `index-backed` / `data-fed` class L or R feature without the check fails. Also: the exit code is set
+  before the deferred exit (an unref'd timer let a failing replay end 0).
+- **`done-check.mjs`**: gap `dynamic_lists:N` — such a feature without a passing `runtime-list` result in the latest
+  dynamics report (or the report missing / older than `parity.json`).
+- **`content-presence.mjs`** (gate criterion 4, `source-fidelity-gate.md`): a runtime list is a `presence.json` region
+  (counts only); headings inside a variable region open no band and are never MISSING; HIDDEN in a variable region
+  counts only beyond the origin's own clipped items (a carousel clips off-screen slides on both sides).
+- **`gate-all.mjs`** unit criterion: only `required` families decide (`requiredOff`, and `unit-geometry.mjs` verdictOf's new
+  `requiredErrors`); an advisory family's deltas — or its empty match — on a page that also has required ones used to fail it. A runtime list's unit families are `required: false`.
+- **Field run** (the same project): done-check reported `dynamic_lists:4` on the unchanged project. Rules read from the source's
+  page data: listing = the collection newest first with the source's page sizes and offsets (12 a page, featured 4 /
+  latest the next 4, recent 7, author 6 a page), a category filter, related = same category minus self with the
+  source's own slice (skip 3, show 5), curated shelves → a 17-row sheet, the in-article trend shortcode → its committed
+  snapshot. The source exposes no category name: categories are inferred from the related-list signatures (5 over 81
+  slugs); its listing summary is a stored field, so listing records (866) come from the source's listing data and each
+  delivered member (46) emits its record as metadata, the index carrying every rendered field. 60 documents rewritten
+  (queries, never items), the importer emits the same (57/57 equal); 20 `runtime-list` rows, replay 39/39; done-check
+  complete. Gate of record (tiered, all 93): delivered 93/93 at both widths; list regions counts-only, list unit families
+  advisory; the partial collection (46 of 866 posts) leaves the listing and author pages documented residuals confined
+  to the list region (pixel up to 32 %), two ticker-timing rows re-gated PASS. AI readability `code` 100 % on the list
+  pages with the list blocks excluded; `strict` 9–93 % is the cost now shown.
+- Tests: `dynamics-check.test.mjs` (applyListRule, authoredItems, judgeRuntimeList, missingListChecks, sourceRows),
+  `done-check.test.mjs` (dynamicListsGap), `content-presence.test.mjs` (variable headings, symmetric HIDDEN),
+  `gate-all.test.mjs` (advisory units). Eval
+  `ai-readability` criterion `runtime_sourced_listing` replaces `document_first_listing`. Prose delta −32 words (the document-first contract folded from five files into one rule).
+
 ## 0.38.0 — a part a template repeats verbatim is authored once: fragments, `parts` rows, entity parts (#143)
 
 Field learning (the same recorded replica rollout, 93 delivered pages, 81 of them template siblings): every sibling document

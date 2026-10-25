@@ -13,7 +13,7 @@ import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { doneGaps, deliveredPaths, headerGap, openP1, probeLive, rolloutEnded } from '../done-check.mjs';
+import { doneGaps, deliveredPaths, dynamicListsGap, headerGap, openP1, probeLive, rolloutEnded } from '../done-check.mjs';
 import { SOURCE_PARITY_PREFIX, publicUrl } from '../lib.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -170,6 +170,23 @@ check('CLI: a replica project without a header contract is not complete', () => 
   const r = run(proj, ['--offline']);
   assert.equal(r.status, 1); assert.match(r.stdout, /^header_parity:no contract/m);
   rmSync(proj, { recursive: true, force: true });
+});
+
+check('dynamicListsGap: an index-backed list proven only by link counts is a gap; a passing runtime-list replay closes it (#144)', () => {
+  const parity = { features: [
+    { id: 'F-LISTS', disposition: 'index-backed', class: 'L', status: 'done', checks: [{ type: 'dom-count' }] },
+    { id: 'F-RELATED', disposition: 'index-backed', class: 'R', status: 'done', checks: [{ type: 'runtime-list' }] },
+    { id: 'F-APP', disposition: 'data-fed', class: 'L', status: 'scaffolded-awaiting-owner', checks: [] },
+    { id: 'F-MENU', disposition: 'rebuild-native', class: 'M', status: 'done', checks: [] },
+  ] };
+  assert.equal(dynamicListsGap({ parity: null }), null);
+  assert.match(dynamicListsGap({ parity }), /^dynamic_lists:2: no dynamics report/);
+  const report = { results: [{ id: 'F-LISTS', type: 'runtime-list', pass: false }, { id: 'F-RELATED', type: 'runtime-list', pass: true }, { id: 'F-RELATED', type: 'dom-count', pass: true }] };
+  assert.equal(dynamicListsGap({ parity, report }), 'dynamic_lists:1: F-LISTS');
+  assert.match(dynamicListsGap({ parity, report, parityAt: 2, reportAt: 1 }), /stale/);
+  report.results[0].pass = true;
+  assert.equal(dynamicListsGap({ parity, report }), null);
+  assert.ok(doneGaps({ lists: 'dynamic_lists:1: F-LISTS' }).gaps.includes('dynamic_lists:1: F-LISTS'));
 });
 
 check('CLI: usage errors exit 2 — no pages.json; no live host without --offline', () => {

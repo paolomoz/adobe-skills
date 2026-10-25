@@ -6,6 +6,8 @@
 // network. Also judgeVideoPlayback, the pure verdict of `video-plays`: presence is never a pass — a
 // native <video> must be PLAYING (currentTime advancing), a vendor iframe must request playback.
 // Also martechChecks (martech contract → checks) and judgeMartechRequests (gate/accept verdicts).
+// Also the runtime-list parts (#144): applyListRule, authoredItems, judgeRuntimeList, missingListChecks — a
+// list copied from the capture into the document fails even when its links look right.
 // Also: --help prints the header and writes nothing.
 // Run: node plugins/stardust/skills/dynamics/scripts/test/dynamics-check.test.mjs
 import assert from 'node:assert/strict';
@@ -14,7 +16,7 @@ import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { compareSearchResults, judgeVideoPlayback, martechChecks, judgeMartechRequests } from '../dynamics-check.mjs';
+import { compareSearchResults, judgeVideoPlayback, martechChecks, judgeMartechRequests, applyListRule, authoredItems, judgeRuntimeList, missingListChecks, sourceRows, listPath } from '../dynamics-check.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = join(HERE, '..', 'dynamics-check.mjs');
@@ -167,10 +169,83 @@ check('judgeMartechRequests: accept needs one host per expected route', () => {
   assert.equal(judgeMartechRequests([], { mode: 'accept', expect: [] }).pass, false);
 });
 
+
+// A query index of five posts (published = epoch seconds) in two categories, one page without a date.
+const INDEX = { total: 5, data: [
+  { path: '/blog/a', title: 'A', category: 'seo', published: '1700000500' },
+  { path: '/blog/b', title: 'B', category: 'seo, ai', published: '1700000400' },
+  { path: '/blog/c', title: 'C', category: 'cases', published: '1700000300' },
+  { path: '/blog/d', title: 'D', category: '', published: '1700000200' },
+  { path: '/tools/e', title: 'E', category: 'seo', published: '1700000600' },
+] };
+const ROWS = sourceRows(INDEX);
+const RELATED = { type: 'runtime-list', path: '/blog/b', block: 'related-articles', source: '/blog.json', prefix: ['/blog/'], filter: { category: '{self}' }, excludeSelf: true, sort: 'published', limit: 5 };
+
+check('sourceRows: query index, multi-sheet and bare array', () => {
+  assert.equal(sourceRows(INDEX).length, 5);
+  assert.equal(sourceRows({ shelves: { data: [{ path: '/x' }] } }, 'shelves').length, 1);
+  assert.equal(sourceRows([{ path: '/x' }, { path: '/y' }]).length, 2);
+  assert.equal(sourceRows({ topics: [{ path: '/t' }] }, 'topics').length, 1);
+  assert.deepEqual(sourceRows(null), []);
+  assert.equal(listPath('https://www.example.test/blog/a/?x=1#h'), '/blog/a');
+});
+
+check('applyListRule: pool prefix, "{self}" category (any of a comma list), self excluded, newest first, offset + limit', () => {
+  assert.deepEqual(applyListRule(ROWS, RELATED).map((r) => r.path), ['/blog/a']);
+  assert.deepEqual(applyListRule(ROWS, { ...RELATED, path: '/blog/d' }).map((r) => r.path), ['/blog/a', '/blog/b', '/blog/c'], 'an empty own value leaves the list unfiltered');
+  assert.deepEqual(applyListRule(ROWS, { prefix: ['/blog/'], sort: 'published', offset: 1, limit: 2 }).map((r) => r.path), ['/blog/b', '/blog/c']);
+  assert.deepEqual(applyListRule(ROWS, { sort: 'published', order: 'asc', limit: 1 }).map((r) => r.path), ['/blog/d']);
+  assert.deepEqual(applyListRule([...ROWS, { path: '/blog/undated' }], { require: 'published', sort: 'published', order: 'asc', limit: 1 }).map((r) => r.path), ['/blog/d'], 'a row without the required field is outside the collection');
+  assert.deepEqual(applyListRule(ROWS, { filter: { category: ['cases', 'ai'] } }).map((r) => r.path), ['/blog/b', '/blog/c'], 'no sort = source order (a curated sheet)');
+});
+
+check('authoredItems: the capture copied into the block is found — by href path on any host — and only inside the named instance', () => {
+  const plain = '<div class="article-list shelf"><div><div><h3>Recent</h3><p><a href="/blog">View all</a></p></div></div></div>'
+    + '<div class="article-list shelf"><div><div><h4><a href="https://www.example.test/blog/a">A</a></h4></div></div><div><div><h4><a href="/blog/zz">Not migrated</a></h4></div></div></div>';
+  assert.deepEqual(authoredItems(plain, { block: 'article-list shelf', nth: 0 }, ROWS), []);
+  assert.deepEqual(authoredItems('<div class="x"><div><div><p><a href="/blog/d">All posts</a></p></div></div></div>', { block: 'x', filter: { category: 'seo' } }, ROWS), [], 'a head link to a row outside the list pool is not an authored item');
+  assert.deepEqual(authoredItems(plain, { block: 'article-list shelf', nth: 1, expectItems: ['/blog/zz'] }, ROWS), ['/blog/a', '/blog/zz']);
+  assert.deepEqual(authoredItems(plain, { block: 'article-list shelf', nth: 1, itemPattern: '^https?://www\\.example\\.test/' }, []), ['/blog/a']);
+  assert.deepEqual(authoredItems('<div class="trend-grid"><div><div><p>Remineralizing gum</p></div></div></div>', { block: 'trend-grid', match: 'text', key: 'label' }, [{ label: 'Remineralizing Gum' }]), ['remineralizing gum']);
+});
+
+check('judgeRuntimeList: the recorded defect — items authored from the capture, no request to the index → FAIL on both', () => {
+  const v = judgeRuntimeList({ authored: ['/blog/a'], requested: false, rendered: ['/blog/a'], rows: ROWS }, RELATED);
+  assert.equal(v.pass, false);
+  assert.match(v.reasons[0], /^items authored in the document: 1 \(\/blog\/a\)/);
+  assert.match(v.reasons[1], /never requested \/blog\.json/);
+});
+
+check('judgeRuntimeList: runtime-sourced, rule holds, a partial migration reported as coverage (PASS)', () => {
+  const v = judgeRuntimeList({ authored: [], requested: true, rendered: ['/blog/a'], rows: ROWS }, { ...RELATED, expectItems: ['/blog/x', '/blog/a', '/blog/y'] });
+  assert.equal(v.pass, true, v.detail);
+  assert.match(v.detail, /source items delivered 1\/3 \(partial migration/);
+});
+
+check('judgeRuntimeList: wrong order or a wrong page size against the rule FAILS; order is checked against the source too', () => {
+  const home = { path: '/', block: 'article-list', source: '/blog.json', prefix: ['/blog/'], sort: 'published', limit: 2 };
+  assert.equal(judgeRuntimeList({ requested: true, rendered: ['/blog/b', '/blog/a'], rows: ROWS }, home).pass, false);
+  assert.equal(judgeRuntimeList({ requested: true, rendered: ['/blog/a', '/blog/b', '/blog/c'], rows: ROWS }, home).pass, false);
+  assert.equal(judgeRuntimeList({ requested: true, rendered: ['/blog/a', '/blog/b'], rows: ROWS }, home).pass, true);
+  const v = judgeRuntimeList({ requested: true, rendered: ['/blog/a', '/blog/b'], rows: ROWS }, { ...home, expectItems: ['/blog/b', '/blog/a'] });
+  assert.equal(v.pass, false); assert.match(v.detail, /order differs from the source/);
+});
+
+check('missingListChecks: an index-backed / data-fed L or R feature without a runtime-list check is named; others are not', () => {
+  const features = [
+    { id: 'lists', disposition: 'index-backed', class: 'L', status: 'done', checks: [{ type: 'dom-count' }] },
+    { id: 'related', disposition: 'index-backed', class: 'R', status: 'done', checks: [{ type: 'runtime-list' }] },
+    { id: 'grid', disposition: 'data-fed', class: 'L', status: 'interim', checks: [] },
+    { id: 'app', disposition: 'data-fed', class: 'L', status: 'scaffolded-awaiting-owner', checks: [] },
+    { id: 'search', disposition: 'index-backed', class: 'S', status: 'done', checks: [{ type: 'search-query' }] },
+  ];
+  assert.deepEqual(missingListChecks(features).map((f) => f.id), ['lists', 'grid']);
+});
+
 check('--help prints the header (naming expectCount) and writes nothing', () => {
   const cwd = mkdtempSync(join(tmpdir(), 'dynamics-check-help-'));
   const r = spawnSync(process.execPath, [SCRIPT, '--help'], { encoding: 'utf8', cwd });
-  assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /search-query/); assert.match(r.stdout, /expectCount/);
+  assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /search-query/); assert.match(r.stdout, /expectCount/); assert.match(r.stdout, /runtime-list/);
   assert.deepEqual(readdirSync(cwd), []);
   rmSync(cwd, { recursive: true, force: true });
 });

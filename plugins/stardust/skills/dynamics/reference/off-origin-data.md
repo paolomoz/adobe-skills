@@ -36,7 +36,7 @@ UI through every state (select option → wait for that option's container → "
 lazy images into view) and record the rendered cards in the block's own vocabulary — **every card
 model the detector saw**. Assert **band count == block count per page** before writing `Source`
 rows (a mismatch feeds the wrong data silently). Block: `Source | <url>#<bandIndex>` → renders like
-live, exposes `data-snapshot`, falls back to authored rows. Converter inserts `Source` only where the
+live, exposes `data-snapshot` (triage.md rule 10: no authored cards). Converter inserts `Source` only where the
 snapshot has cards. Production path: the library's datasource or same-origin routing.
 
 ## Sheet-backed data (class D)

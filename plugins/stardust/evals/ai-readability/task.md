@@ -21,9 +21,10 @@ The stardust `deploy` skill is invoked. It:
 1. Writes the carousel so that loop clones are **presentational**: no text nodes, `alt=""`, no
    `href`, no `role`/`aria-*`. The rendered DOM word count of the carousel equals the authored
    slide text once.
-2. Writes the locations band **document-first**: the generator emits one authored row per index
-   item carrying the card's text plus one label-list row; the block renders from rows and reads the
-   index only for images/coordinates and top-up. The document, not the block, carries the 12 names.
+2. Writes the locations band **runtime-sourced** (dynamics triage rule 10, #144): the document
+   carries the band's heading, an authored summary, its labels and its query rows — never the 12
+   items; the block reads the index at runtime. The report shows the band excluded from the code
+   score (`--exclude-blocks`) with its strict-score cost.
 3. Inlines the newsletter copy (heading, lede, button label) into the document with a
    `fragment | /fragments/newsletter` section-metadata row, or records the fragment as an
    agent-invisible-by-design item in the report with its point cost — one or the other, explicitly.

@@ -10,6 +10,8 @@
  *   --live-host  aem.live host or origin the delivered pages must answer 200 on (default rollout.json site.liveHost)
  *   --offline    skip the live probe; pages_not_live is not checked and the verdict says so
  *   --json       print { complete, gaps[], liveChecked } instead of one line per gap
+ *   --parity     dynamics parity file (default stardust/dynamics/parity.json; absent = no list gap)
+ *   --dynamics-report  replay report (default stardust/qa/dynamics-report.json)
  *
  * Gaps, one per line in this order; complete = none:
  *   pages_unfinished:N             coverage rows not yet verified (pending, content-pending, converting, deployed, stale)
@@ -22,11 +24,15 @@
  *                                  chrome/header-parity.json (chrome-compare) is missing, older than the contract,
  *                                  of the wrong profile (replica flow: replica; redesign, reskin: functional),
  *                                  short of a contract width, not run on the live host, or has undecided errors
+ *   dynamic_lists:N: <ids>         index-backed / data-fed lists (stardust/dynamics/parity.json, class L or R) without a
+ *                                  passing `runtime-list` result in stardust/qa/dynamics-report.json, or that report
+ *                                  missing / older than the parity file: a list copied into the documents is not
+ *                                  delivered (dynamics triage rule 10, #144)
  *   rollout_incomplete             the last stardust:rollout I-dashboard ledger line is not an `end`
  *
  * Exit: 0 complete · 1 gaps · 2 usage (no coverage/pages.json; no live host and no --offline).
  */
-import { readFileSync, existsSync, realpathSync } from 'node:fs';
+import { readFileSync, existsSync, realpathSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readJSON, isSourceParity, publicUrl } from './lib.mjs';
@@ -75,7 +81,23 @@ export function headerGap({ flow = null, contract = null, parity = null, liveHos
   return open.length ? `header_parity:${open.length}: ${listed(open.map((f) => f.key))}` : null;
 }
 
-export function doneGaps({ pages = [], findings = [], ledgerLines = [], notLive = null, header = null }) {
+const LIST_DISPOSITIONS = new Set(['index-backed', 'data-fed']);
+const OPEN_STATUS = new Set(['decided-out', 'skipped-source-broken', 'scaffolded-awaiting-owner']);
+/** The dynamic-lists gap, or null: every index-backed / data-fed L or R list proven runtime-sourced by a passing replay. */
+export function dynamicListsGap({ parity = null, report = null, parityAt = 0, reportAt = 0 }) {
+  const lists = ((parity && parity.features) || []).filter((f) => LIST_DISPOSITIONS.has(f.disposition) && ['L', 'R'].includes(f.class) && !OPEN_STATUS.has(f.status));
+  if (!lists.length) return null;
+  if (!report) return `dynamic_lists:${lists.length}: no dynamics report — dynamics-check.mjs --origin <live host>`;
+  if (reportAt && parityAt && reportAt < parityAt) return `dynamic_lists:${lists.length}: stale — parity.json is newer than the dynamics report`;
+  const results = report.results || [];
+  const open = lists.filter((f) => {
+    const mine = results.filter((r) => r.id === f.id && r.type === 'runtime-list');
+    return !mine.length || mine.some((r) => !r.pass);
+  });
+  return open.length ? `dynamic_lists:${open.length}: ${listed(open.map((f) => f.id))}` : null;
+}
+
+export function doneGaps({ pages = [], findings = [], ledgerLines = [], notLive = null, header = null, lists = null }) {
   const gaps = [];
   const unfinished = pages.filter((p) => UNFINISHED.has(statusOf(p)));
   if (unfinished.length) gaps.push(`pages_unfinished:${unfinished.length}`);
@@ -85,6 +107,7 @@ export function doneGaps({ pages = [], findings = [], ledgerLines = [], notLive 
   const p1 = openP1(findings);
   if (p1.length) gaps.push(`open_p1:${p1.length}`);
   if (header) gaps.push(header);
+  if (lists) gaps.push(lists);
   if (!rolloutEnded(ledgerLines)) gaps.push('rollout_incomplete');
   return { complete: gaps.length === 0, gaps, liveChecked: notLive !== null };
 }
@@ -137,7 +160,10 @@ async function main() {
   const notLive = OFFLINE ? null : await probeLive(host, deliveredPaths(pages));
   const chrome = arg('chrome', 'stardust/chrome');
   const header = headerGap({ flow: (readJSON(arg('state', 'stardust/state.json'), {}) || {}).flow || null, contract: readJSON(join(chrome, 'header-contract.json')), parity: readJSON(join(chrome, 'header-parity.json')), liveHost: OFFLINE ? null : host });
-  const verdict = doneGaps({ pages, findings, ledgerLines: readLedger(LEDGER), notLive, header });
+  const parityFile = arg('parity', 'stardust/dynamics/parity.json'); const reportFile = arg('dynamics-report', 'stardust/qa/dynamics-report.json');
+  const mtime = (f) => (existsSync(f) ? statSync(f).mtimeMs : 0);
+  const lists = dynamicListsGap({ parity: readJSON(parityFile), report: readJSON(reportFile), parityAt: mtime(parityFile), reportAt: mtime(reportFile) });
+  const verdict = doneGaps({ pages, findings, ledgerLines: readLedger(LEDGER), notLive, header, lists });
 
   if (JSON_OUT) console.log(JSON.stringify(verdict));
   else {

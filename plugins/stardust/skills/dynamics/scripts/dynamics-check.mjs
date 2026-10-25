@@ -29,6 +29,18 @@
  *                  set; no two results share title + text. A count mismatch FAILS — a recorded hands-off run's
  *                  typeahead returned 10 entries (two home pages under one title) where the source returned 3.
  *                  Exported as `compareSearchResults(results, check)` for the unit test and the qa check.
+ *   runtime-list   { path*, block*, source*, itemSelector?, nth?, sheet?, key?, match?, prefix?[], filter?, require?, sort?, order?, offset?, limit?,
+ *                    excludeSelf?, itemPattern?, expectItems?[] }
+ *                  an index-backed / data-fed list renders from its SOURCE at runtime (dynamics triage rule 10): FAIL when the
+ *                  block (`block` = its class tokens, `nth` instance) carries the items in `<path>.plain.html`, when the page never
+ *                  requests `source`, or when the rendered items (`itemSelector` inside the block, default `a[href]`) differ from
+ *                  the rule applied to the source rows — `prefix` paths, `filter` { field: value | [values] | "{self}" = the
+ *                  page's own row value, empty = unfiltered }, `require` fields a row must carry, `excludeSelf`, `sort` field
+ *                  `order` desc|asc (none = source order: a curated sheet), `offset`, `limit`. Identity: `key` (default path) by href path, or `match: "text"`.
+ *                  `expectItems` = what the SOURCE showed: the delivered ones must keep its order; a partial migration
+ *                  delivers a subset, so coverage is reported, not failed. Pure parts exported: `applyListRule`,
+ *                  `authoredItems`, `judgeRuntimeList`, `missingListChecks` (an index-backed / data-fed class L or R
+ *                  feature without a runtime-list check fails).
  *   form-flow      { path*, form?, submit*, fill*, statusSelector?, endpointPattern?, successIncludes? } empty submit refused, filled submit arrives
  *   video-plays    { path*, trigger?, iframeSelector?, videoSelector?, playbackHost?, reducedMotionPauses? }
  *                  PLAYBACK, not presence: a vendor iframe must issue a playback request to playbackHost with
@@ -171,6 +183,112 @@ export function judgeMartechRequests(hosts, c) {
   return { pass: expect.length > 0 && missing.length === 0, detail: missing.length ? `not requested after consent: ${missing.map((g) => `${g.id} (${g.hosts.join(' | ')})`).join(', ')}` : `${expect.length} route(s) requested after consent` };
 }
 
+/* ---------------------------------------------------- runtime-list (#144) ---- */
+const LIST_DISPOSITIONS = new Set(['index-backed', 'data-fed']);
+const LIST_CLASSES = new Set(['L', 'R']);
+const squashText = (x) => String(x ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
+/** href or path → '/a/b' (host, query, hash and trailing slash dropped); a non-URL value comes back squashed. */
+export const listPath = (u) => {
+  const v = String(u ?? '').trim();
+  if (!v) return '';
+  try { const p = new URL(v, 'https://x.invalid').pathname.replace(/\/+$/, ''); return p || '/'; } catch { return squashText(v); }
+};
+const identity = (v, match) => (match === 'text' ? squashText(v) : listPath(v));
+
+/** Rows of a source document: `{ data }` (query index, one sheet), `{ <sheet>: { data } }` (multi-sheet) or `{ <sheet>: [...] }`
+ * (a snapshot's named array) by `sheet`, a bare array. */
+export function sourceRows(json, sheet = null) {
+  if (Array.isArray(json)) return json;
+  if (!json || typeof json !== 'object') return [];
+  if (sheet && Array.isArray(json[sheet])) return json[sheet]; // a snapshot's named array ({ topics: [...] })
+  if (sheet && json[sheet] && Array.isArray(json[sheet].data)) return json[sheet].data;
+  return Array.isArray(json.data) ? json.data : [];
+}
+
+/** The list rule applied to the source rows → the rows the page must render, in order. */
+export function applyListRule(rows, { path = '', key = 'path', prefix = [], filter = {}, require = [], excludeSelf = false, sort = null, order = 'desc', offset = 0, limit = null } = {}) {
+  const self = listPath(path);
+  const own = rows.find((r) => listPath(r[key]) === self) || {};
+  const prefixes = [].concat(prefix || []).filter(Boolean);
+  const values = (r, field) => String(r[field] ?? '').split(',').map(squashText).filter(Boolean);
+  const wants = Object.entries(filter || {}).map(([field, v]) => [field, v === '{self}' ? values(own, field) : [].concat(v).map(squashText).filter(Boolean)]).filter(([, vs]) => vs.length);
+  const needs = [].concat(require || []).flatMap((f) => String(f).split(',')).map((f) => f.trim()).filter(Boolean);
+  let out = rows.filter((r) => (!prefixes.length || prefixes.some((p) => listPath(r[key]).startsWith(p)))
+    && needs.every((f) => String(r[f] ?? '').trim())
+    && wants.every(([field, vs]) => values(r, field).some((x) => vs.includes(x)))
+    && !(excludeSelf && listPath(r[key]) === self));
+  if (sort) {
+    const val = (r) => { const x = r[sort]; const n = Number(x); return Number.isFinite(n) && String(x).trim() !== '' ? n : (Date.parse(x) || 0); };
+    out = out.map((r, i) => ({ r, i })).sort((a, b) => (order === 'asc' ? val(a.r) - val(b.r) : val(b.r) - val(a.r)) || a.i - b.i).map((x) => x.r);
+  }
+  out = out.slice(Math.max(0, Number(offset) || 0));
+  if (limit !== null && limit !== undefined && limit !== '') out = out.slice(0, Math.max(0, Number(limit)));
+  return out;
+}
+
+/** Outer HTML of every element whose class list holds all of `tokens` (plain-HTML string scan, balanced on the tag). */
+export function blocksIn(html, tokens) {
+  const want = String(tokens || '').split(/\s+/).filter(Boolean);
+  const out = [];
+  const re = /<(div|section|ul|ol)\b[^>]*\bclass="([^"]*)"[^>]*>/gi;
+  let m;
+  while ((m = re.exec(html))) {
+    const cls = m[2].split(/\s+/);
+    if (!want.every((t) => cls.includes(t))) continue;
+    const tag = m[1].toLowerCase();
+    const tagRe = new RegExp(`<(/?)${tag}\\b[^>]*>`, 'gi');
+    tagRe.lastIndex = m.index;
+    let depth = 0; let t; let end = html.length;
+    while ((t = tagRe.exec(html))) { depth += t[1] ? -1 : 1; if (depth === 0) { end = tagRe.lastIndex; break; } }
+    out.push(html.slice(m.index, end));
+  }
+  return out;
+}
+
+/** Item identities found AUTHORED inside the block instance in the served document: source rows or expected items it names. */
+export function authoredItems(plainHtml, check = {}, rows = []) {
+  const { block, nth = 0, key = 'path', match = 'path', itemPattern = null, expectItems = [] } = check;
+  const html = blocksIn(plainHtml || '', block)[nth] || '';
+  if (!html) return [];
+  // the rows the list could show (its pool: prefix, require, filter — no slice), not every row of the source
+  const pool = applyListRule(rows, { ...check, offset: 0, limit: null, excludeSelf: false });
+  const known = new Set([...pool.map((r) => identity(r[key], match)), ...expectItems.map((x) => identity(x, match))].filter(Boolean));
+  const pattern = itemPattern ? new RegExp(itemPattern) : null;
+  const found = new Set();
+  if (match === 'text') {
+    const text = squashText(html.replace(/<[^>]+>/g, ' ').replace(/&[a-z#0-9]+;/gi, ' '));
+    known.forEach((k) => { if (k && text.includes(k)) found.add(k); });
+  } else {
+    for (const a of html.matchAll(/\bhref="([^"]*)"/gi)) {
+      const p = listPath(a[1].replace(/&amp;/g, '&'));
+      if (known.has(p) || (pattern && pattern.test(a[1]))) found.add(p);
+    }
+  }
+  return [...found];
+}
+
+/** Verdict of one runtime-list check from what the replay saw. Pure. */
+export function judgeRuntimeList({ authored = [], requested = false, rendered = [], rows = [] } = {}, check = {}) {
+  const { match = 'path', key = 'path' } = check;
+  const reasons = [];
+  if (authored.length) reasons.push(`items authored in the document: ${authored.length} (${authored.slice(0, 3).join(', ')}) — the block must render them from ${check.source}`);
+  if (!requested) reasons.push(`the page never requested ${check.source}`);
+  const expected = applyListRule(rows, check).map((r) => identity(r[key], match));
+  const got = rendered.map((x) => identity(x, match)).filter(Boolean);
+  if (expected.join('|') !== got.join('|')) reasons.push(`rendered ≠ the rule over the source: expected [${expected.slice(0, 6).join(', ')}${expected.length > 6 ? ', …' : ''}] (${expected.length}) · rendered [${got.slice(0, 6).join(', ')}${got.length > 6 ? ', …' : ''}] (${got.length})`);
+  const source = (check.expectItems || []).map((x) => identity(x, match));
+  const shared = source.filter((x) => got.includes(x));
+  const inGot = got.filter((x) => shared.includes(x));
+  if (shared.join('|') !== inGot.join('|')) reasons.push(`order differs from the source on the shared items: source [${shared.join(', ')}] · here [${inGot.join(', ')}]`);
+  const coverage = source.length ? ` · source items delivered ${shared.length}/${source.length}${shared.length < source.length ? ' (partial migration: the rest are not in the source rows yet)' : ''}` : '';
+  const summary = `${got.length} rendered from ${rows.length} source rows (rule → ${expected.length})${coverage}`;
+  return { pass: reasons.length === 0, detail: reasons.length ? `${summary} · ${reasons.join(' · ')}` : `${summary} · runtime-sourced, rule holds`, reasons, expected, rendered: got };
+}
+
+/** Index-backed / data-fed features of class L or R that carry no runtime-list check. */
+export const missingListChecks = (features = []) => features.filter((f) => LIST_DISPOSITIONS.has(f.disposition) && LIST_CLASSES.has(f.class)
+  && !['decided-out', 'skipped-source-broken', 'scaffolded-awaiting-owner'].includes(f.status) && !(f.checks || []).some((c) => c.type === 'runtime-list'));
+
 const RUNNERS = {
   async 'fetch-json'(c, { ctx, origin }) {
     const { page } = await openPage(ctx, origin, '/');
@@ -208,6 +326,41 @@ const RUNNERS = {
     await page.close();
     const { pass, detail } = compareSearchResults(results, c);
     return { pass, detail, thirdParty };
+  },
+  async 'runtime-list'(c, { ctx, origin, authHeader }) {
+    const headers = authHeader ? { authorization: authHeader } : {};
+    const withLimit = (u) => (/[?&]limit=/.test(u) ? u : `${u}${u.includes('?') ? '&' : '?'}limit=5000`);
+    const src = c.source.startsWith('http') ? c.source : origin + c.source;
+    const get = (u) => ctx.request.get(u, { headers: src.startsWith(origin) ? headers : {} });
+    let res = await get(withLimit(src));
+    if (res.status() === 400) res = await get(src); // a code-bus JSON refuses the sheet paging parameter
+    const rows = sourceRows(await res.json().catch(() => null), c.sheet || null);
+    const plainUrl = `${origin}${c.path === '/' ? '/index' : c.path.replace(/\/$/, '')}.plain.html`;
+    const plain = await (await ctx.request.get(plainUrl, { headers })).text().catch(() => '');
+    const page = await ctx.newPage();
+    const requests = [];
+    page.on('request', (r) => requests.push(r.url()));
+    await page.goto(origin + c.path, { waitUntil: 'networkidle', timeout: 60000 }).catch(() => {});
+    const sel = `.${String(c.block).split(/\s+/).filter(Boolean).join('.')}`;
+    const items = c.itemSelector || 'a[href]';
+    await page.evaluate(({ s, n }) => document.querySelectorAll(s)[n]?.scrollIntoView({ block: 'center' }), { s: sel, n: c.nth || 0 });
+    await page.waitForFunction(({ s, n, i }) => document.querySelectorAll(s)[n]?.querySelector(i), { s: sel, n: c.nth || 0, i: items }, { timeout: 15000 }).catch(() => {});
+    await settle(1500);
+    const rendered = await page.evaluate(({ s, n, i, text }) => {
+      const b = document.querySelectorAll(s)[n];
+      if (!b) return [];
+      const seen = []; // one entry per item: its own href or the first link inside it
+      b.querySelectorAll(i).forEach((el) => {
+        const v = text ? el.textContent : (el.getAttribute('href') || el.querySelector('a[href]')?.getAttribute('href') || '');
+        if (v && !seen.includes(v)) seen.push(v);
+      });
+      return seen;
+    }, { s: sel, n: c.nth || 0, i: items, text: c.match === 'text' });
+    await page.close();
+    const requested = requests.some((u) => listPath(u) === listPath(src));
+    const authored = authoredItems(plain, c, rows);
+    const v = judgeRuntimeList({ authored, requested, rendered, rows }, c);
+    return { pass: v.pass, detail: v.detail };
   },
   async 'form-flow'(c, { ctx, origin }) {
     const { page, thirdParty } = await openPage(ctx, origin, c.path);
@@ -293,14 +446,15 @@ export async function replay({ origin, parity, contract = null, authHeader = nul
   const browser = await chromium.launch({ headless: !headed });
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   await attachOriginAuth(ctx, origin, authHeader);
-  const results = [];
+  const results = missingListChecks(features).map((f) => ({ feature: f.feature, id: f.id, class: f.class, status: f.status, type: 'runtime-list', pass: false, detail: `no runtime-list check — a ${f.disposition} list proves it renders from its source (dynamics triage rule 10)`, thirdParty: '', ms: 0, environmentLimit: null }));
+  results.forEach((r) => console.error(`[dynamics-check] FAIL ${r.feature} · runtime-list — ${r.detail}`));
   for (const f of features) {
     for (const c of f.checks || []) {
       const t0 = Date.now();
       const runner = RUNNERS[c.type];
       let r;
       if (!runner) r = { pass: false, detail: `unknown check type "${c.type}"` };
-      else { try { r = await runner(c, { ctx, origin }); } catch (e) { r = { pass: false, detail: `error: ${String(e.message).slice(0, 140)}` }; } }
+      else { try { r = await runner(c, { ctx, origin, authHeader }); } catch (e) { r = { pass: false, detail: `error: ${String(e.message).slice(0, 140)}` }; } }
       results.push({ feature: f.feature, id: f.id, class: f.class, status: f.status, type: c.type, pass: !!r.pass, detail: r.detail, thirdParty: summarize(r.thirdParty || []), ms: Date.now() - t0, environmentLimit: f.environmentLimit || null });
       console.error(`[dynamics-check] ${r.pass ? 'PASS' : 'FAIL'} ${f.feature} · ${c.type} — ${r.detail}`);
     }
@@ -339,5 +493,6 @@ if (process.argv[1] && process.argv[1].endsWith('dynamics-check.mjs')) {
   writeText(join(out, 'dynamics-report.md'), md.join('\n'));
   writeJSON(join(out, 'dynamics-report.json'), { _provenance: provenance('check', { origin, parity: parityFile, ...(contractFile && { contract: contractFile }) }), results });
   console.error(`[dynamics-check] ${pass}/${results.length} pass → ${join(out, 'dynamics-report.md')}`);
-  setTimeout(() => process.exit(pass === results.length ? 0 : 1), 200).unref();
+  process.exitCode = pass === results.length ? 0 : 1; // an unref'd exit timer let a failing run end 0
+  setTimeout(() => process.exit(process.exitCode), 200).unref();
 }

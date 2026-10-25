@@ -139,7 +139,11 @@ export function verdict({ pixel = {}, clip = null, content = null, units = null,
   const clipPass = !clipOn ? null : clipped == null ? null : clipped <= clipMax + allowance;
   const cTot = content && content.totals ? content.totals : null;
   const contentPass = !contentOn ? null : cTot ? (cTot.missing + cTot.hidden) === 0 : null;
-  const unitPass = units && units.verdict && units.required ? (units.verdict.off + units.verdict.hidden + units.verdict.missing + units.verdict.errors) === 0 : null;
+  // only the required families decide (`requiredOff`, unit-geometry verdictOf); advisory deltas on the same page — a runtime
+  // list's cards (#144) — are reported, never failed. A verdict without the split counts every delta.
+  // (an advisory family that finds nothing — a runtime list that rendered empty — is an advisory error)
+  const unitMiss = (v) => (Number.isFinite(v.requiredOff) ? v.requiredOff : v.off + v.hidden + v.missing) + (Number.isFinite(v.requiredErrors) ? v.requiredErrors : v.errors);
+  const unitPass = units && units.verdict && units.required ? unitMiss(units.verdict) === 0 : null;
   const skeletonPass = st && st.skeleton ? (st.skeleton.ok === false ? false : st.skeleton.ok === true ? true : null) : null;
   const reasons = [];
   if (!compared) reasons.push(st ? 'height not measured (probe error)' : pixel.error ? `pixel error: ${pixel.error}` : 'missing capture');

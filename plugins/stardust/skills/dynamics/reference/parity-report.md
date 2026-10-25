@@ -27,10 +27,10 @@ site *do* now?".
 ```
 
 Check types (closed set, all replayable): `fetch-json` · `dom-count` · `click-dialog` ·
-`search-query` · `form-flow` · `video-plays` · `consent-gate` · `martech` (from the martech contract,
-`martech.md`) · `no-page-errors` — fields in the
-script header. A feature with no checks is listed under "features without checks" with its status
-and owner; `decided-out` rows belong there.
+`search-query` · `runtime-list` · `form-flow` · `video-plays` · `consent-gate` · `martech` (from the
+martech contract, `martech.md`) · `no-page-errors` — fields in the script header. A feature with
+no checks is listed under "features without checks" with its status and owner; `decided-out` rows
+belong there.
 
 `search-query` compares with what the SOURCE showed for the same term, read at detect time and
 recorded on the check: `expectCount` (the visible result count — a mismatch FAILS), `expectTitles`
@@ -40,6 +40,12 @@ Example: `{ "type": "search-query", "path": "/search", "term": "bali", "resultSe
 ".search-results li", "expectCount": 3, "expectTitles": ["Bali Escape", "Bali by Bike", "Bali Food
 Trail"], "expectIncludes": "/tours/bali" }`. A recorded hands-off run's check passed on presence
 while the typeahead returned 10 entries for a source answer of 3.
+
+`runtime-list` (triage.md rule 10) fails when the list's items are authored in the page's
+`.plain.html` or the page never requests `source`; the rendered items must equal the rule applied to
+the source rows, and the items the SOURCE showed (`expectItems`, read at detect) keep their order.
+A partial migration delivers a subset — coverage is reported, not failed. An index-backed or
+data-fed L / R feature without the check fails.
 
 ## Rules
 

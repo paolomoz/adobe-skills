@@ -258,7 +258,7 @@ export function compareUnits(oInv, eInv, pair, tol) {
 }
 
 // `required` counters only feed the exit code; advisory families are reported, never blocking.
-export const verdictOf = (results) => results.reduce((a, r) => { if (r.error) a.errors += 1; for (const u of r.units) { a.off += u.summary.off; a.hidden += u.summary.hidden; a.missing += u.summary.missing; a.within += u.summary.within; a.units += 1; if (r.required !== false) a.requiredOff += u.summary.off + u.summary.hidden + u.summary.missing; } return a; }, { units: 0, within: 0, off: 0, hidden: 0, missing: 0, errors: 0, requiredOff: 0 });
+export const verdictOf = (results) => results.reduce((a, r) => { if (r.error) { a.errors += 1; if (r.required !== false) a.requiredErrors += 1; } for (const u of r.units) { a.off += u.summary.off; a.hidden += u.summary.hidden; a.missing += u.summary.missing; a.within += u.summary.within; a.units += 1; if (r.required !== false) a.requiredOff += u.summary.off + u.summary.hidden + u.summary.missing; } return a; }, { units: 0, within: 0, off: 0, hidden: 0, missing: 0, errors: 0, requiredOff: 0, requiredErrors: 0 });
 
 /** Families a page belongs to (by slug or template) → [{ family, origin, eds, n, required }]. */
 export function unitsFor(families, slug, template = null) {

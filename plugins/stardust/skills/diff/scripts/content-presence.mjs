@@ -20,7 +20,8 @@
  * Links and buttons are one pool on the served side; text-less image anchors count as images. Scope
  * is symmetric (root only when BOTH sides have one, else whole page); header / footer and everything
  * above / below them are left to the chrome crop gate unless --chrome. `--variable <selO=selE,…>`
- * marks session-variable regions (counts only, HIDDEN still counts). The origin side fails loud on
+ * marks session-variable regions (counts only; HIDDEN counts beyond the origin's own clipped items — a carousel clips
+ * off-screen slides on both sides; their headings open no band, #144). The origin side fails loud on
  * HTTP ≥ 400 (exit 4) and on a bot challenge (exit 3). Trap: an infinite-scroll origin keeps loading
  * under the settle — mark that region --variable.
  *
@@ -190,7 +191,9 @@ export function diffPresence(originInv, edsInv, { countTol = 0.25, chrome = fals
   const inScope = (it) => (scope === 'page' || it.inRoot) && (chrome || !it.inChrome);
   const O = originInv.items.filter((it) => it.state === 'visible' && inScope(it));
   const E = edsInv.items.filter(inScope);
-  const bandHeads = (items) => items.filter((it) => it.kind === 'heading' && it.level <= 3 && it.state === 'visible').sort((a, b) => a.y - b.y);
+  // a heading inside a session-variable region (a runtime list's card titles, #144) neither opens a band nor must be present;
+  // the region's links and text compare as counts
+  const bandHeads = (items) => items.filter((it) => it.kind === 'heading' && it.level <= 3 && it.state === 'visible' && !it.variable).sort((a, b) => a.y - b.y);
   const oh = bandHeads(O); const eh = bandHeads(E);
   const pairs = alignHeadings(oh.map((h) => norm(h.text)), eh.map((h) => norm(h.text)));
   const findings = [];
@@ -246,7 +249,7 @@ export function diffPresence(originInv, edsInv, { countTol = 0.25, chrome = fals
           else add(sev, missingKind, `${deficit > 1 ? `×${deficit} ` : ''}"${sample.text || sample.href}"${sample.href ? ` → ${sample.href}` : ''} in band "${name}" (origin y ${sample.y}) not on the served page`, { band: k, n: deficit, text: sample.text, href: sample.href });
         }
       }
-      if (oVar.length) { const eVarVis = eItems.filter((it) => it.kind === kind && it.variable && it.state === 'visible').length; const eVarHid = eItems.filter((it) => it.kind === kind && it.variable && it.state === 'hidden').length; if (eVarHid) add(sev, hiddenKind, `×${eVarHid} ${kind}s clipped away inside the session-variable region of band "${name}"`, { band: k, n: eVarHid, variable: true }); if (Math.abs(eVarVis - oVar.length) > Math.max(2, countTol * oVar.length)) add('🟡', `COUNT ${kind.toUpperCase()}S`, `session-variable region in band "${name}": ${oVar.length} origin → ${eVarVis} served`, { band: k }); }
+      if (oVar.length) { const eVarVis = eItems.filter((it) => it.kind === kind && it.variable && it.state === 'visible').length; const oVarHid = originInv.items.filter((it) => it.kind === kind && it.variable && it.state === 'hidden' && inScope(it) && bandOf(ob, it.y) === k).length; const eVarHid = Math.max(0, eItems.filter((it) => it.kind === kind && it.variable && it.state === 'hidden').length - oVarHid); if (eVarHid) add(sev, hiddenKind, `×${eVarHid} ${kind}s clipped away inside the session-variable region of band "${name}"${oVarHid ? ` (beyond the origin's own ${oVarHid})` : ''}`, { band: k, n: eVarHid, variable: true }); if (Math.abs(eVarVis - oVar.length) > Math.max(2, countTol * oVar.length)) add('🟡', `COUNT ${kind.toUpperCase()}S`, `session-variable region in band "${name}": ${oVar.length} origin → ${eVarVis} served`, { band: k }); }
       // extra
       if (kind === 'link') for (const [key, cE] of eVis) { const cO = oAll.get(key) || 0; if (cO === 0 && !key.startsWith('href:')) { const s = eItems.find((it) => action(it) && linkKey(it) === key); add('🟡', 'EXTRA LINK', `${cE > 1 ? `×${cE} ` : ''}"${s.text || s.href}" served in band "${name}", no origin link or button`, { band: k, n: cE, text: s.text }); } }
     }

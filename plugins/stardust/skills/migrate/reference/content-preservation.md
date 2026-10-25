@@ -181,8 +181,8 @@ the crawl ran with `--dynamics`):
   link, third-party form action, widget mount) — no log entry.
 - `index-backed` / `data-fed` / `rebuild-native` / `client-only` → the
   section is rendered by the block `deploy` builds for it; migrate
-  emits the authored fallback rows (or the `#modal` link, the player
-  URL) and logs `contentDeviations[]` `kind: "dynamic-dependency"` with
+  emits its config rows — never captured list items (dynamics triage
+  rule 10) — or the `#modal` link, the player URL, and logs `contentDeviations[]` `kind: "dynamic-dependency"` with
   the disposition, the row id and the endpoint, so the report shows
   what the page depends on at runtime.
 - `static-snapshot` / `decided-out` → render the captured state and log
@@ -196,7 +196,7 @@ Deviation shape:
 
 ```json
 { "kind": "dynamic-dependency", "disposition": "data-fed", "row": "reviews-rail",
-  "endpoint": "GET api.example-vendor.test/v1/reviews", "note": "authored fallback: 3 rows" }
+  "endpoint": "GET api.example-vendor.test/v1/reviews", "note": "query: 3 newest, same category" }
 ```
 
 ## Voice and tone deviations

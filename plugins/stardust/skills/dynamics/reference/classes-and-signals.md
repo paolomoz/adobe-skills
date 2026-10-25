@@ -7,7 +7,7 @@ screenshots: a site's dynamic surface is invisible to a block-scoped, pixel-veri
 
 | class | meaning | signals the detector reads | usual disposition |
 |---|---|---|---|
-| **L** listing | a block that lists other pages | repeated same-site card groups in the content area, dates in cards | `index-backed` or `static-snapshot` (curated) — the choice stays human |
+| **L** listing | a block that lists other pages | repeated same-site card groups in the content area, dates in cards | `index-backed`; a list the source curates → `data-fed` curated sheet (triage.md rule 10) |
 | **S** search | site search, autocomplete, results | `form[role=search]`, `q`/`s`/`query` inputs, first-party XHR with `search|autocomplete|typeahead|suggest`, hosted search vendors | `index-backed` (+ a results page — a search box without one is a 404) |
 | **F** form | any submission | `<form>` with or without `action`, **form-less control groups** (modern CMS front ends render forms without a form tag), token-like hidden names, form-vendor hosts | `rebuild-native` with a configurable endpoint; `client-only` when the form is pure compute |
 | **M** modal / interactive | overlays, dialogs, tabs, accordions, chrome interactions | `*modal*|dialog|lightbox|popup` markers, `aria-haspopup=dialog`, `aria-controls`/`data-*trigger` → `[role=dialog]`, titles carried on the trigger; chrome-only triggers are interactions, not modals | `rebuild-native` |

@@ -22,7 +22,7 @@ static path; every page must still work as a static page.
 |---|---|
 | `prepare-migration` Phase 4.5 · `replica` Phase 2 | Phases 1–3 (detect on archetypes, classify, triage) — the pre-import gate |
 | `migrate` Phase 1 | safety net: no inventory → run Phases 1–3 now (hand-run `extract → direct → prototype → migrate` never passed a gate) |
-| `deploy` | reads the inventory as brief input (fallback rows, `#modal` markers, endpoint config; never flatten `client-only` / modal-bearing sections) |
+| `deploy` | reads the inventory as brief input (query rows, `#modal` markers, endpoint config; never flatten `client-only` / modal-bearing sections) |
 | `rollout` B2 · D2 | B2 verifies the inventory against fresh evidence; D2 = Phase 4 for the `self` set + one owner batch |
 | `qa` `dynamics` check · rollout report | Phase 5 replay of `parity.json` |
 | **standalone** `$stardust dynamics <origin>` | all phases on a site that was already migrated without them |
@@ -81,7 +81,7 @@ and a commit. Tooling: `snapshot-api.mjs`, `snapshot-forms.mjs`, `sync-sheets.mj
 comes from `helix-query.yaml` in the code branch** — commit, push, publish live, poll — never from a
 configuration-service write; the sheet-backed interim index only when the branch is not writable
 (`reference/listings.md` § Getting an index at all). **Search** follows `reference/patterns.md`
-§ search-index-backed. **Listings and data-fed bands are document-first**: the document carries the item text as authored rows, the block reads the index or snapshot only for non-text fields and top-up (`reference/listings.md` § Block contract; why: `deploy/reference/ai-readability.md`).
+§ search-index-backed. **Index-backed and data-fed blocks read their source at runtime**, never captured items (`reference/triage.md` rule 10).
 
 ## Phase 5 — Verify: dynamic parity
 

@@ -54,6 +54,22 @@ check('session-variable region: counts only (never MISSING), HIDDEN still 🔴',
   assert.ok(r.findings.some((x) => x.kind === 'COUNT LINKS'));
   assert.equal(r.totals.hidden, 1); assert.equal(r.bands[1].variable, true);
 });
+check('runtime list (#144): a carousel in a variable region clipping off-screen slides on both sides is not HIDDEN', () => {
+  const slides = (n, hidden) => Array.from({ length: n }, (_, i) => it('link', `Card ${i}`, 100 + i, { href: `/c${i}`, variable: true, state: i >= n - hidden ? 'hidden' : 'visible' }));
+  const o = inv([it('heading', 'H', 10, { level: 1 }), ...slides(5, 2)]);
+  const e = inv([it('heading', 'H', 10, { level: 1 }), ...slides(5, 2)]);
+  assert.equal(diffPresence(o, e).totals.hidden, 0);
+  const e2 = inv([it('heading', 'H', 10, { level: 1 }), ...slides(5, 3)]);
+  assert.equal(diffPresence(o, e2).totals.hidden, 1, 'one more clipped than the origin');
+});
+check('runtime list (#144): card headings inside a variable region are never MISSING — the delivered items differ from the capture', () => {
+  const o = inv([it('heading', 'H', 10, { level: 1 }), it('heading', 'Source post A', 100, { level: 3, variable: true }), it('heading', 'Source post B', 140, { level: 3, variable: true }), it('heading', 'Footer band', 400, { level: 2 })]);
+  const e = inv([it('heading', 'H', 10, { level: 1 }), it('heading', 'Delivered post', 100, { level: 3, variable: true }), it('heading', 'Footer band', 400, { level: 2 })]);
+  const r = diffPresence(o, e);
+  assert.ok(!r.findings.some((x) => x.kind === 'MISSING HEADING'), JSON.stringify(r.findings));
+  assert.ok(!r.findings.some((x) => x.kind === 'EXTRA HEADING'), JSON.stringify(r.findings));
+  assert.equal(r.bands.length, 3);
+});
 check('CONTROL STATE for a trigger with the same label and a different value; COUNT control matched by via', () => {
   const o = inv([it('heading', 'H', 10, { level: 1 }), it('control', '', 20, { label: 'sort by', value: 'Recommended', via: 'trigger' }), it('control', '', 30, { label: 'count coupon', value: '285', via: 'count' })]);
   const e = inv([it('heading', 'H', 10, { level: 1 }), it('control', '', 20, { label: 'sort by', value: 'Expiration Date', via: 'trigger' }), it('control', '', 30, { label: 'count coupon', value: '284', via: 'count' })]);

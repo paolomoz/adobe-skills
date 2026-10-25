@@ -1,8 +1,8 @@
 # Listings — metadata contract and query-index
 
 Blocks that LIST other pages (directories, news/event feeds, "related" rails) read an EDS
-**query-index** (a published JSON of pages with per-page properties) instead of frozen cards — when
-the source is not editorially curated; that decision stays human and is recorded in the inventory.
+**query-index** (a published JSON of pages with per-page properties) — or, where the source curates
+the list, a curated sheet — never frozen cards (triage.md rule 10).
 
 ## Why it is a PRE-IMPORT gate
 
@@ -94,19 +94,11 @@ code branch is not writable, recorded `interim` with the owner decision named.
 
 ## Block contract
 
-**Document-first.** The generator writes the listing INTO the document: for a flat listing one row
-per item carrying exactly the text the card shows (title link, date, category, address, excerpt);
-for a grouped listing a heading row per group, then its item rows; last, one label-list row (a
-`<ul>` of the block's UI strings — filter labels, "View details", empty-state copy). The block
-renders from rows and reads the index only for what is not text (images, coordinates) and to **top
-up** items published after the last write, newest first, client-paged. Re-runs of the generator
-recognise their own rows (a link into the listed template set, or the label list) and replace them,
-so an index change is a re-run, never a merge. Curated authored rows are preserved verbatim.
+Runtime-sourced (triage.md rule 10): authored rows are the head, the UI labels and one query row per
+key (`source`, `filter`, `sort`, `offset`, `limit`); the block fetches, filters, sorts, pages and
+renders the cards. A grouped listing is one block per group, each with its own query. For
+non-rendering crawlers the page carries an authored summary of what it lists; the AI-readability
+`code` metric excludes the list blocks (`--exclude-blocks`), `strict` reports their cost.
 
-Why: served words ÷ rendered words is what Adobe's readability checker scores and what non-rendering
-crawlers read — a block that builds 65 cards from the index leaves ~850 words out of the document and
-halves the page's score (`deploy/reference/ai-readability.md`). Index-only rendering is right for
-thousands of items or per-user results; such a page needs an authored summary in the document.
-
-**Verify.** Authored rows equal the index on the listing pages; a newly published page appears after
-publish (top-up); the AI-readability gate reads ≥ 98 on every listing page.
+**Verify.** A `runtime-list` parity row per list (parity-report.md); a newly published page appears
+in every list whose rule admits it, with no document edited.

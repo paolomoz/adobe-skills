@@ -56,7 +56,7 @@ second.
 | cause (rendered words the document does not have) | typical size | remediation |
 |---|---|---|
 | **Loop clones** (Splide/Swiper geometry: 2×perView copies of every slide, full text, `aria-hidden` + `inert`) | a 5-card rail → 17 cards; 40–60 points on a home page | clones are **presentational**: empty text nodes (TreeWalker), `alt=""`, no `href`, `loading=lazy`, no `role`/`aria-*`; or a loop-less scroll-snap track |
-| **Index-fed listings** (block fetches `/query-index.json`, builds every card) | 65 location cards ≈ 850 words; 50 points | document-first listings (§ 4, rule 3) |
+| **Index-fed listings** (block fetches `/query-index.json`, builds every card) | 65 location cards ≈ 850 words; 50 points | runtime-sourced by contract (§ 4, rule 3) |
 | **Runtime fragments** (`<a href="/fragments/x">` → block fetches `.plain.html`) | a form or newsletter 60–330 words per page | inline citation-critical copy; keep UI-label fragments and **credit** them in the report |
 | **Definition-driven forms** (block renders labels, sections, options from `data/forms/*.json`) | 335 words on an enquiry page | block accepts authored field rows; JSON stays an import format |
 | **Generated labels, counts, duplicates** ("Show more", "N results", sr-only helpers, a cloned chip for another breakpoint, an accordion header cloned for mobile) | 1–5 points, but every page | author the label list; place one element with CSS `order`; drop unauthored sr-only text |
@@ -70,13 +70,8 @@ second.
    named in the gate allowlist as `block + string`, never per page.
 2. **Clones are presentational.** Anything a block duplicates for geometry carries no text, alt,
    href, role or aria. The EW `stripInstrumentation()` pass and this rule apply to the same nodes.
-3. **Document-first listings (fallback-first).** The generator writes one authored row per listed
-   item carrying the card's text — for grouped listings a heading row per group, then item rows,
-   then one label-list row (`<ul>` of the block's UI strings). The block renders from rows and uses
-   the index only for non-text fields (images, coordinates) and to **top up** pages published after
-   the last write; re-runs recognise their own rows and replace them. Index-only rendering is
-   right for thousands of items or per-user results, and such a page needs an authored summary.
-   A data-fed band with authored fallback rows for the default state costs ≈0 points.
+3. **Runtime lists are a content-architecture decision** (dynamics triage rule 10): the page
+   carries an authored summary, the list block is excluded from `code`, its cost shown on `strict`.
 4. **Fragments carry UI, not copy.** A fragment link is a hole in the served page. Newsletter,
    promo and form copy that should be citable is authored inline; a search panel or share bar can
    stay a fragment. Where a fragment is inlined, keep a `fragment | /fragments/x` section-metadata

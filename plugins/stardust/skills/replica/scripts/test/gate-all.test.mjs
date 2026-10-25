@@ -56,6 +56,13 @@ check('criteria switched off read null and cannot fail; --no-probes = the pixel-
   const v = verdict({ pixel: px(3, 0), clip: clip(99), content: content(9, 9) }, { clipOn: false, contentOn: false });
   assert.equal(v.pass, true); assert.equal(v.clipPass, null); assert.equal(v.contentPass, null);
 });
+check('units: advisory families on a page with required ones never fail it — only requiredOff decides (#144)', () => {
+  const v = { units: 6, within: 11, off: 5, hidden: 0, missing: 4, errors: 0, requiredOff: 0 };
+  assert.equal(verdict({ pixel: px(3, 0), clip: clip(0), content: content(0, 0), units: { verdict: v, required: true } }).unitPass, true);
+  assert.equal(verdict({ pixel: px(3, 0), clip: clip(0), content: content(0, 0), units: { verdict: { ...v, requiredOff: 1 }, required: true } }).pass, false);
+  assert.equal(verdict({ pixel: px(3, 0), clip: clip(0), content: content(0, 0), units: { verdict: { ...v, errors: 1, requiredErrors: 0 }, required: true } }).unitPass, true, 'an advisory family with no match');
+  assert.equal(verdict({ pixel: px(3, 0), clip: clip(0), content: content(0, 0), units: { verdict: { ...v, errors: 1, requiredErrors: 1 }, required: true } }).unitPass, false);
+});
 check('units: required units fail the page, advisory ones do not', () => {
   const u = { verdict: { off: 3, hidden: 1, missing: 0, errors: 0 } };
   assert.equal(verdict({ pixel: px(3, 0), clip: clip(0), content: content(0, 0), units: { ...u, required: true } }).pass, false);

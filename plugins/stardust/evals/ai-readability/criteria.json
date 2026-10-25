@@ -8,9 +8,9 @@
       "description": "Carousel/marquee loop clones carry no text nodes, alt=\"\", no href, no role/aria; the rendered DOM word count of the block equals the authored slide text counted once."
     },
     {
-      "name": "document_first_listing",
+      "name": "runtime_sourced_listing",
       "max_score": 20,
-      "description": "The index-backed band is delivered with one authored row per listed item (card text) plus a label-list row; the block renders from rows and uses the index only for non-text fields and top-up (reference/ai-readability.md § 4 rule 3)."
+      "description": "The index-backed band reads the index at runtime: the document carries its heading, an authored summary, labels and query rows, never the listed items; the code score excludes the band and the report states its strict-score cost (dynamics triage rule 10; reference/ai-readability.md § 4 rule 3)."
     },
     {
       "name": "fragment_decision_explicit",

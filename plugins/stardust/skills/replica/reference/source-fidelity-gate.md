@@ -811,7 +811,9 @@ clip.json [+ units.json]` and `summary.{json,md}`. **Verdict, per page — all f
    headings, links (by visible text), buttons, images, text blocks per band (h1–h3 sequence
    aligned by text) plus control STATE. Clipped past 50 % = HIDDEN, not present. Buttons,
    control state and count deltas are reported, not blocking. Regions declared in
-   `presence.json` (rails, coupon walls, reviews) compare as counts — HIDDEN still counts.
+   `presence.json` (rails, coupon walls, reviews, a runtime list — its `runtime-list` parity row
+   checks the rule, its unit families are `required: false`) compare as counts — HIDDEN beyond the
+   origin's own clipped items counts.
    Origin not probeable (edge 403, bot challenge) → `content: n/a (<why>)`, never a fail,
    never a silent pass.
    (+ **units** — `unit-geometry` off / hidden / missing = 0 for `units.json` entries marked

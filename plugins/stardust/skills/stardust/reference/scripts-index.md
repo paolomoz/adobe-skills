@@ -33,7 +33,7 @@ Run the project copies under `stardust/scripts/<skill>/`. Read this before `--he
 - `diff/measure-live.mjs` — library (settle + rect/type measurement for gate probes), no CLI
 - `diff/unit-geometry.mjs` — repeated-unit geometry Δ — `<origin> <served> (--unit <selO>=<selE> | --families <f> --slug <s>)`; exit 2 = off/hidden/missing
 - `diff/visual-diff.mjs` — screenshot diff + flags — `<protoURL> <edsURL> [--out <dir>] [--width <px>] [--main <sel>]`
-- `dynamics/dynamics-check.mjs` — replay parity checks (search-query count + top titles) — `--origin <h> [--parity <json>] [--out stardust/qa]`
+- `dynamics/dynamics-check.mjs` — replay parity checks (search count + titles, runtime-list) — `--origin <h> [--parity <json>] [--out stardust/qa]`
 - `dynamics/dynamics-detect.mjs` — detect dynamic features — `--urls a,b [--from-state stardust/state.json]`
 - `dynamics/dynamics-plan.mjs` — triage draft — `[--in <json>] [--out <dir>] [--target-origin <h>] [--martech [dir]] [--knowledge]`
 - `dynamics/lib.mjs` — library, no CLI
@@ -81,7 +81,7 @@ Run the project copies under `stardust/scripts/<skill>/`. Read this before `--he
 - `rollout/assemble.mjs` — sitemap, robots, manifest; served-sitemap check — `[--out stardust/rollout] [--canon <dir>] [--verify-origin <origin>]`
 - `rollout/autofix-aem.mjs` — fix findings in the EDS project — `--project <root> [--dry-run]`
 - `rollout/block-audit.mjs` — variant or block: merge/promote/rename/keep
-- `rollout/blocks.mjs` — block dedup ledger — `[--out <dir>]`
+- `rollout/blocks.mjs` — block dedup ledger — `[--out <d>]`
 - `rollout/dashboard.mjs` — progress dashboard — `[--out <dir>]`
 - `rollout/delivery-lint.mjs` — pre-PUT static lint P0–P2 — `--file <html> [--path </da/path>] [--content <dir>] [--json]`
 - `rollout/done-check.mjs` — run complete? exit 0 = yes — `[--live-host <h>|--offline] [--json]`

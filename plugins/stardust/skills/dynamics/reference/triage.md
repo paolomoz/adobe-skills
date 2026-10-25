@@ -78,6 +78,13 @@ from an open-ended stall into a bounded phase.
    (patterns.md § search-index-backed).
 9. **Search parity is count and titles** — `expectCount` / `expectTitles` per probe term on the
    `search-query` check in `parity.json` (patterns.md § search-index-backed).
+10. **Index-backed and data-fed ship runtime-sourced (#144).** The block reads its source — query
+   index, sheet, JSON endpoint — at delivery time; the document carries its heading, labels and query
+   (filter, sort, offset, page size), never the items. A copy of captured items is no delivery tier:
+   when the source cannot exist yet the block reads a committed snapshot JSON, `interim`, decision
+   named. The rule is read from the source's own data (page props, API calls), never guessed; a list
+   the source curates is a curated sheet. The index carries every field the blocks render — the
+   `helix-query.yaml` properties follow from them. Proof: a `runtime-list` parity row (parity-report.md).
 
 ## `stardust/dynamic-features.md`
 
