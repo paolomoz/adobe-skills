@@ -7,6 +7,8 @@
 //
 //   node state.mjs advance <slug…> --to <status> [--by <who>] [--prototype <path>] [--migrated <path>]
 //                  [--skill <name>] [--force | --history-only] [--dir <stardust dir>]
+//   node state.mjs add <slug…> | --slugs-file <f>  --type <type> [--type-class <c>] [--template <t>]
+//                  [--variant <v>] [--representative <slug>] [--pages-dir <dir>] [--partial] [--dir <d>]
 //   node state.mjs summary [--slugs] [--dir <stardust dir>]
 //
 // Lifecycle (state-machine.md § Page lifecycle states): extracted → directed → prototyped →
@@ -23,7 +25,11 @@
 // Top-level key order on write (state-machine.md § File): _provenance, site, direction, handsOff,
 // flow, flowChosenAt, flowSource, pages; a key this script does not know keeps its place relative
 // to the known keys around it (never pushed behind pages).
-// Exit codes: 0 ok · 2 usage, unknown slug, or illegal transition (nothing written in every 2 case).
+// `add` (#146) registers captured pages that are not rows yet (a later capture round, a wave's roster): one
+// `extracted` row per slug from its capture record, refusing a duplicate, a missing capture, a record without
+// live-render evidence (state-machine.md § Provenance validation) and a capture whose final URL left the
+// requested path (a redirect is not a page).
+// Exit codes: 0 ok · 2 usage, unknown slug, illegal transition or a refused add (nothing written in every 2 case).
 import { existsSync, readFileSync, renameSync, writeFileSync, realpathSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -48,6 +54,8 @@ const PLUGIN_MANIFEST = join(HERE, '..', '..', '..', '.claude-plugin', 'plugin.j
 const HELP = `Usage:
   node state.mjs advance <slug…> --to <${ORDER.join('|')}> [--by <who>] [--prototype <path>]
                  [--migrated <path>] [--skill <name>] [--force | --history-only] [--dir <d>]
+  node state.mjs add <slug…> | --slugs-file <f>  --type <type> [--type-class <c>] [--template <t>]
+                 [--variant <v>] [--representative <slug>] [--pages-dir <dir>] [--partial] [--dir <d>]
   node state.mjs summary [--slugs] [--dir <d>]
   (--dir defaults to ${DEFAULT_DIR}; the file is <dir>/${FILE_NAME} and must already exist)
 
@@ -60,9 +68,16 @@ advance  moves every named page to <status>: appends { status, at[, approvedBy] 
          after approved does not demote — state-machine.md § Linearity rule); no direction check,
          stale untouched, paths still set. Not combinable with --force.
          A value flag followed by nothing or by another --flag is a usage error.
+add      appends one row per captured slug (newline / comma separated in --slugs-file): status extracted,
+         url / title / history from <pages-dir>/<slug>.json (default <dir>/current/pages), type and the
+         optional typeClass, template, variant, representative (the archetype slug a sibling clones — read by
+         rollout inventory --state and gate-all's tiers; it must be a row already, or in the same add).
+         Refused: a slug already in state.json or given twice, no capture, a capture without live-render
+         evidence (renderedBy playwright, fetchedAt, waitMs > 0, waitMode, httpStatus 200–399), a final URL
+         on another path. Any refusal → exit 2, nothing written; --partial adds the rest and lists them.
 summary  prints page counts by status (and the slugs per status with --slugs).
-Writes: advance rewrites <dir>/${FILE_NAME} in place (atomic temp file + rename); summary writes nothing.
-Exit codes: 0 ok, 2 usage / illegal transition.`;
+Writes: advance and add rewrite <dir>/${FILE_NAME} in place (atomic temp file + rename); summary writes nothing.
+Exit codes: 0 ok, 2 usage / illegal transition / refused add.`;
 
 export class UsageError extends Error { constructor(msg, code = 2) { super(msg); this.code = code; } }
 
@@ -176,6 +191,47 @@ export function advance(state, slugs, { to, by = null, prototype = null, migrate
   return { plan, cleared };
 }
 
+// state-machine.md § Provenance validation — the conditions a capture record must meet to become a row.
+export const WAIT_MODE = /^(fast|medium|spec|networkidle|domcontentloaded)(\(fallback\))?$/;
+export function captureProblem(rec, url = null) {
+  const p = rec && rec._provenance;
+  if (!p) return 'no _provenance (not a live render)';
+  if (p.renderedBy !== 'playwright') return `renderedBy ${p.renderedBy}`;
+  if (Number.isNaN(Date.parse(p.fetchedAt))) return 'fetchedAt not ISO';
+  if (!Number.isInteger(p.waitMs) || p.waitMs <= 0) return `waitMs ${p.waitMs}`;
+  if (!WAIT_MODE.test(String(p.waitMode || ''))) return `waitMode ${p.waitMode}`;
+  if (!Number.isInteger(p.httpStatus) || p.httpStatus < 200 || p.httpStatus > 399) return `httpStatus ${p.httpStatus}`;
+  const path = (u) => { try { return new URL(u).pathname.replace(/\/+$/, '') || '/'; } catch { return null; } };
+  const want = url || rec.url;
+  if (rec.finalUrl && want && path(rec.finalUrl) !== path(want)) return `redirected to ${rec.finalUrl}`;
+  return null;
+}
+
+// Plans the rows for `add`; `read(slug)` returns the capture record or null. Returns { rows, refused[{slug, why}] }.
+export function planAdd(state, slugs, { type, typeClass = null, template = null, variant = null, representative = null, pagesDir, read, at = nowIso() }) {
+  if (!slugs.length) throw new UsageError('add needs at least one <slug> (or --slugs-file)');
+  if (!type) throw new UsageError('add needs --type <type> (state-machine.md § Page types)');
+  const have = new Set(state.pages.map((p) => p.slug));
+  if (representative && !have.has(representative) && !slugs.includes(representative)) throw new UsageError(`--representative ${representative} is not a page in state.json`);
+  const rows = []; const refused = []; const seen = new Set();
+  for (const slug of slugs) {
+    if (have.has(slug)) { refused.push({ slug, why: 'already in state.json' }); continue; }
+    if (seen.has(slug)) { refused.push({ slug, why: 'given twice' }); continue; }
+    seen.add(slug);
+    const rec = read(slug);
+    if (!rec) { refused.push({ slug, why: `no capture ${join(pagesDir, `${slug}.json`)}` }); continue; }
+    const why = captureProblem(rec);
+    if (why) { refused.push({ slug, why }); continue; }
+    rows.push({
+      slug, url: rec.url, title: rec.title || slug, type, ...(typeClass ? { typeClass } : {}), ...(template ? { template } : {}),
+      ...(variant ? { variant } : {}), ...(representative && representative !== slug ? { representative } : {}),
+      status: 'extracted', history: [{ status: 'extracted', at: rec._provenance.fetchedAt || at }], stale: false, staleReason: null,
+      currentStatePath: join(pagesDir, `${slug}.json`), prototypePath: null, migratedPath: null,
+    });
+  }
+  return { rows, refused };
+}
+
 export function summarise(state) {
   const counts = Object.fromEntries(ORDER.map((s) => [s, []]));
   const other = {};
@@ -189,7 +245,7 @@ export function summarise(state) {
 
 // ---- argv --------------------------------------------------------------------------------------
 function parseArgs(argv) {
-  const opts = { dir: DEFAULT_DIR, force: false, historyOnly: false, slugs: false, to: null, by: null, prototype: null, migrated: null, skill: null };
+  const opts = { dir: DEFAULT_DIR, force: false, historyOnly: false, slugs: false, to: null, by: null, prototype: null, migrated: null, skill: null, type: null, typeClass: null, template: null, variant: null, representative: null, pagesDir: null, slugsFile: null, partial: false };
   const pos = [];
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
@@ -209,6 +265,14 @@ function parseArgs(argv) {
     else if (a === '--prototype') opts.prototype = need();
     else if (a === '--migrated') opts.migrated = need();
     else if (a === '--skill') opts.skill = need();
+    else if (a === '--type') opts.type = need();
+    else if (a === '--type-class') opts.typeClass = need();
+    else if (a === '--template') opts.template = need();
+    else if (a === '--variant') opts.variant = need();
+    else if (a === '--representative') opts.representative = need();
+    else if (a === '--pages-dir') opts.pagesDir = need();
+    else if (a === '--slugs-file') opts.slugsFile = need();
+    else if (a === '--partial') opts.partial = true;
     else if (a === '--gate' || a === '--note') throw new UsageError(`${a} is not accepted: a state.json history entry carries status, at and approvedBy only (state-machine.md § File). Gate evidence belongs in the producing skill's own ledger; free-text notes belong in stardust/journal.md.`);
     else if (a.startsWith('-')) throw new UsageError(`unknown option ${a}`);
     else pos.push(a);
@@ -235,6 +299,29 @@ export function main(argv) {
       for (const [k, v] of rows) console.log(`  ${k.padEnd(11)} ${String(v.length).padStart(3)}  ${v.join(', ')}`);
       if (s.stale.length) console.log(`  ${'stale'.padEnd(11)} ${String(s.stale.length).padStart(3)}  ${s.stale.join(', ')}`);
     }
+    return 0;
+  }
+
+  if (cmd === 'add') {
+    const { state, file } = readState(opts.dir);
+    let slugs = rest;
+    if (opts.slugsFile) {
+      if (!existsSync(opts.slugsFile)) throw new UsageError(`--slugs-file ${opts.slugsFile} not found`);
+      slugs = [...slugs, ...readFileSync(opts.slugsFile, 'utf8').split(/[\s,]+/).filter(Boolean)];
+    }
+    const pagesDir = opts.pagesDir || join(opts.dir, 'current', 'pages');
+    const read = (slug) => { const f = join(pagesDir, `${slug}.json`); try { return existsSync(f) ? JSON.parse(readFileSync(f, 'utf8')) : null; } catch { return null; } };
+    const at = nowIso();
+    const { rows, refused } = planAdd(state, slugs, { type: opts.type, typeClass: opts.typeClass, template: opts.template, variant: opts.variant, representative: opts.representative, pagesDir, read, at });
+    const list = refused.map((r) => `  refused ${r.slug}: ${r.why}`).join('\n');
+    if (refused.length && !opts.partial) throw new UsageError(`${refused.length} of ${slugs.length} refused — nothing written (--partial adds the rest):\n${list}`);
+    if (rows.length) {
+      state.pages.push(...rows);
+      state._provenance = stampProvenance(state._provenance, normaliseSkill(opts.skill || 'extract'), at);
+      writeState(file, state);
+    }
+    console.log(`state: ${rows.length} page(s) added as extracted (type ${opts.type}${opts.template ? `, template ${opts.template}` : ''}${opts.representative ? `, representative ${opts.representative}` : ''}) · ${state.pages.length} rows${refused.length ? ` · ${refused.length} refused` : ''}`);
+    if (list) console.log(list);
     return 0;
   }
 

@@ -6,7 +6,8 @@
  * per-page _meta.json sidecars, and writes the rollout coverage:
  *   - stardust/rollout/coverage/pages.json     (one row per migrated page)
  *   - stardust/rollout/coverage/templates.json (grouping for delivery order/reuse)
- *   - stardust/rollout/rollout.json            (config + lastRun summary; created if absent)
+ *   - stardust/rollout/rollout.json            (config + lastRun summary; created if absent — a prior
+ *                                                file's keys survive: lib.mjs mergeConfig, #146)
  *
  * Idempotent + incremental: existing delivery status is preserved. When a page's
  * migrated HTML changed (sourceHash differs) after it was already deployed/verified,
@@ -46,7 +47,7 @@ import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, statSy
 import { createHash } from 'node:crypto';
 import { join, dirname, relative, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { pageWidgets } from './lib.mjs';
+import { mergeConfig, pageWidgets } from './lib.mjs';
 
 // --help prints this file's usage header, so an agent never reads the source to learn the flags.
 if (process.argv.includes('--help') || process.argv.includes('-h')) {
@@ -305,17 +306,7 @@ const prov = (writtenBy) => ({
 writeFileSync(pagesPath, `${JSON.stringify({ _provenance: prov('stardust:rollout/inventory'), generatedAt: now, pages }, null, 2)}\n`);
 writeFileSync(templatesPath, `${JSON.stringify({ _provenance: prov('stardust:rollout/inventory'), generatedAt: now, templates }, null, 2)}\n`);
 
-const priorConfig = readJSON(configPath, null);
-const config = {
-  _provenance: { writtenBy: 'stardust:rollout/inventory', writtenAt: now, stardustVersion: STARDUST_VERSION },
-  target: 'aem-eds',
-  site: {
-    sourceUrl: SITE_URL || (priorConfig && priorConfig.site && priorConfig.site.sourceUrl) || 'about:blank',
-    da: (priorConfig && priorConfig.site && priorConfig.site.da) || { org: '', site: '', ref: 'main' },
-    liveHost: (priorConfig && priorConfig.site && priorConfig.site.liveHost) || null,
-  },
-  lastRun: { at: now, pages: counts, blocks: { total: 0, converted: 0, pending: 0 }, verifyFailures: 0 },
-};
+const config = mergeConfig(readJSON(configPath, null), { now, counts, siteUrl: SITE_URL, version: STARDUST_VERSION });
 writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
 
 // --- Report --------------------------------------------------------------------

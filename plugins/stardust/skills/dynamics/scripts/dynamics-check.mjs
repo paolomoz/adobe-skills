@@ -38,7 +38,9 @@
  *                  page's own row value, empty = unfiltered }, `require` fields a row must carry, `excludeSelf`, `sort` field
  *                  `order` desc|asc (none = source order: a curated sheet), `offset`, `limit`. Identity: `key` (default path) by href path, or `match: "text"`.
  *                  `expectItems` = what the SOURCE showed: the delivered ones must keep its order; a partial migration
- *                  delivers a subset, so coverage is reported, not failed. Pure parts exported: `applyListRule`,
+ *                  delivers a subset, so coverage is reported, not failed — but an `expectItems` entry that IS a source row
+ *                  and fails the rule's selection (prefix / filter / require, before the slice) FAILS: a metadata value spelled
+ *                  otherwise drops a delivered member (#146). Pure parts exported: `applyListRule`,
  *                  `authoredItems`, `judgeRuntimeList`, `missingListChecks` (an index-backed / data-fed class L or R
  *                  feature without a runtime-list check fails).
  *   form-flow      { path*, form?, submit*, fill*, statusSelector?, endpointPattern?, successIncludes? } empty submit refused, filled submit arrives
@@ -280,6 +282,15 @@ export function judgeRuntimeList({ authored = [], requested = false, rendered = 
   const shared = source.filter((x) => got.includes(x));
   const inGot = got.filter((x) => shared.includes(x));
   if (shared.join('|') !== inGot.join('|')) reasons.push(`order differs from the source on the shared items: source [${shared.join(', ')}] · here [${inGot.join(', ')}]`);
+  // membership (#146): an item the source listed that IS a source row must pass the rule's selection (prefix,
+  // filter, require — before the slice): a metadata value spelled otherwise (an author name, a category) drops a
+  // delivered member silently, which coverage would read as "not migrated yet".
+  const pool = new Set(applyListRule(rows, { ...check, offset: 0, limit: null }).map((r) => identity(r[key], match)));
+  const lost = rows.filter((r) => source.includes(identity(r[key], match)) && !pool.has(identity(r[key], match)));
+  if (lost.length) {
+    const fields = Object.keys(check.filter || {});
+    reasons.push(`delivered source item(s) the rule drops: ${lost.slice(0, 3).map((r) => `${identity(r[key], match)}${fields.length ? ` (${fields.map((f) => `${f}="${r[f] ?? ''}"`).join(', ')})` : ''}`).join(', ')}${lost.length > 3 ? ` +${lost.length - 3}` : ''} — the row's field must read as the filter does`);
+  }
   const coverage = source.length ? ` · source items delivered ${shared.length}/${source.length}${shared.length < source.length ? ' (partial migration: the rest are not in the source rows yet)' : ''}` : '';
   const summary = `${got.length} rendered from ${rows.length} source rows (rule → ${expected.length})${coverage}`;
   return { pass: reasons.length === 0, detail: reasons.length ? `${summary} · ${reasons.join(' · ')}` : `${summary} · runtime-sourced, rule holds`, reasons, expected, rendered: got };

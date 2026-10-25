@@ -119,6 +119,25 @@ export function rollupConfig(config, pages, blocks, now) {
   };
 }
 
+/**
+ * The rollout.json an inventory run writes (#146): the prior file's keys survive — every `site` key a later
+ * step wrote (`site.site`, …), any top-level key, `lastRun.blocks` (blocks.mjs owns it) and
+ * `lastRun.verifyFailures` (verify owns it); the run sets `_provenance`, `lastRun.at`, `lastRun.pages`,
+ * and `site.sourceUrl` when `siteUrl` is given.
+ */
+export function mergeConfig(prior, { now, counts, siteUrl = null, version = '0.0.0' }) {
+  const p = prior && typeof prior === 'object' ? prior : {};
+  const site = p.site && typeof p.site === 'object' ? p.site : {};
+  const last = p.lastRun && typeof p.lastRun === 'object' ? p.lastRun : {};
+  return {
+    ...p,
+    _provenance: { writtenBy: 'stardust:rollout/inventory', writtenAt: now, stardustVersion: version },
+    target: p.target || 'aem-eds',
+    site: { ...site, sourceUrl: siteUrl || site.sourceUrl || 'about:blank', da: site.da || { org: '', site: '', ref: 'main' }, liveHost: site.liveHost || null },
+    lastRun: { ...last, at: now, pages: counts, blocks: last.blocks || { total: 0, converted: 0, pending: 0 }, verifyFailures: last.verifyFailures || 0 },
+  };
+}
+
 /** EDS block name from a block id: kebab + guard against reserved EDS classes (#15). */
 export const RESERVED = new Set(['section', 'block', 'wrap', 'button', 'widget']);
 export function edsName(id) {

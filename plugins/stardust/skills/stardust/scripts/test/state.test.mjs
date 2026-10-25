@@ -11,7 +11,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ORDER, SET_BY, TOP_ORDER, advance, classify, orderTopLevel, pluginVersion, stampProvenance, summarise } from '../state.mjs';
+import { ORDER, SET_BY, TOP_ORDER, advance, captureProblem, classify, orderTopLevel, planAdd, pluginVersion, stampProvenance, summarise } from '../state.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = join(HERE, '..', 'state.mjs');
@@ -192,6 +192,42 @@ check('usage: missing --to, bad --to, no slug, unknown command, unknown option, 
   const none = spawnSync(process.execPath, [SCRIPT], { encoding: 'utf8' }); assert.equal(none.status, 2); assert.match(none.stderr, /Usage:/);
   const missing = spawnSync(process.execPath, [SCRIPT, 'summary', '--dir', join(root, 'nowhere')], { encoding: 'utf8' }); assert.equal(missing.status, 2); assert.match(missing.stderr, /does not exist — extract creates it/);
   const h = run('--help'); assert.equal(h.code, 0); assert.match(h.out, /node state\.mjs advance <slug…> --to </); assert.match(h.out, /node state\.mjs summary \[--slugs\]/); assert.match(h.out, /--history-only/);
+});
+
+// ---- add (#146): captured pages that are not rows yet ----
+const prov = { renderedBy: 'playwright', fetchedAt: '2026-02-01T00:00:00Z', waitMs: 1500, waitMode: 'medium', httpStatus: 200 };
+const cap = (slug, extra = {}) => ({ slug, url: `https://example.com/blog/${slug}`, finalUrl: `https://example.com/blog/${slug}/`, title: `T ${slug}`, _provenance: { ...prov }, ...extra });
+check('captureProblem: the live-render conditions and a final URL on another path', () => {
+  assert.equal(captureProblem(cap('a')), null);
+  assert.match(captureProblem({ url: 'https://x.test/a' }), /no _provenance/);
+  assert.match(captureProblem(cap('a', { _provenance: { ...prov, renderedBy: 'fetch' } })), /renderedBy fetch/);
+  assert.match(captureProblem(cap('a', { _provenance: { ...prov, waitMs: 0 } })), /waitMs 0/);
+  assert.match(captureProblem(cap('a', { _provenance: { ...prov, waitMode: 'medium(fallback)', httpStatus: 404 } })), /httpStatus 404/);
+  assert.match(captureProblem(cap('a', { finalUrl: 'https://example.com/blog' })), /redirected to/);
+});
+check('planAdd: one extracted row per capture; duplicates, repeats, missing and unrendered captures refused; representative must exist', () => {
+  const st = { pages: [mkPage('home', 'migrated')] };
+  const caps = { a: cap('a'), b: cap('b', { _provenance: { ...prov, renderedBy: 'none' } }) };
+  const { rows, refused } = planAdd(st, ['a', 'home', 'a', 'b', 'c'], { type: 'article', template: '/blog/post', variant: '/blog/post#1', representative: 'home', pagesDir: 'stardust/current/pages', read: (s) => caps[s] || null });
+  assert.deepEqual(rows.map((r) => r.slug), ['a']);
+  assert.deepEqual(refused.map((r) => `${r.slug}:${r.why.split(' ')[0]}`), ['home:already', 'a:given', 'b:renderedBy', 'c:no']);
+  const [r] = rows;
+  assert.equal(r.status, 'extracted'); assert.equal(r.representative, 'home'); assert.equal(r.template, '/blog/post'); assert.equal(r.title, 'T a');
+  assert.deepEqual(r.history, [{ status: 'extracted', at: '2026-02-01T00:00:00Z' }]); assert.equal(r.currentStatePath, join('stardust/current/pages', 'a.json'));
+  assert.throws(() => planAdd(st, ['a'], { type: 'article', representative: 'nope', pagesDir: 'p', read: () => cap('a') }), /--representative nope is not a page/);
+  assert.throws(() => planAdd(st, ['a'], { pagesDir: 'p', read: () => cap('a') }), /needs --type/);
+});
+check('add CLI: all-or-nothing by default, --partial writes the valid rows, a re-add is refused', () => {
+  const pages = join(dir, 'current', 'pages'); mkdirSync(pages, { recursive: true });
+  writeFileSync(join(pages, 'post-a.json'), JSON.stringify(cap('post-a'))); writeFileSync(join(pages, 'post-b.json'), JSON.stringify(cap('post-b')));
+  writeFileSync(join(root, 'slugs.txt'), 'post-a\npost-b,post-z\n');
+  const before = read().pages.length;
+  const r1 = run('add', '--slugs-file', join(root, 'slugs.txt'), '--type', 'article', '--representative', 'home');
+  assert.equal(r1.code, 2); assert.match(r1.err, /1 of 3 refused — nothing written/); assert.match(r1.err, /post-z: no capture/); assert.equal(read().pages.length, before);
+  const r2 = run('add', '--slugs-file', join(root, 'slugs.txt'), '--type', 'article', '--representative', 'home', '--partial');
+  assert.equal(r2.code, 0, r2.err); assert.match(r2.out, /2 page\(s\) added as extracted/); assert.match(r2.out, /refused post-z/);
+  assert.equal(read().pages.length, before + 2); assert.equal(page('post-b').representative, 'home'); assert.equal(read()._provenance.writtenBy, 'stardust:extract');
+  const r3 = run('add', 'post-a', '--type', 'article'); assert.equal(r3.code, 2); assert.match(r3.err, /post-a: already in state\.json/);
 });
 
 rmSync(root, { recursive: true, force: true });

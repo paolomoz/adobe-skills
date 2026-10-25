@@ -21,9 +21,9 @@ const normUrl = (u) => { try { const x = new URL(u); return `${x.origin}${x.path
 /**
  * Who is whose archetype. Sources, first match wins: the page's `_meta.json` (`fidelityTier: "sibling"` +
  * `archetypeSource` | `template`), a sibling-variance JSON that lists the page's URL under `siblings[]` (its
- * `archetype` URL names the archetype), the state `template` group (pages with a `prototypePath` are its archetypes;
+ * `archetype` URL names the archetype), the state row's `representative` (`state.mjs add`, #146), the state `template` group (pages with a `prototypePath` are its archetypes;
  * a sibling takes the one with its `variant`, else the first). A page named by no rule is `unique`.
- * pages: [{ slug, url, template, variant, prototypePath }]; metas: slug → _meta.json; variance: [{ archetype, siblings: [{ url } | url] }].
+ * pages: [{ slug, url, template, variant, prototypePath, representative }]; metas: slug → _meta.json; variance: [{ archetype, siblings: [{ url } | url] }].
  */
 export function resolveRoles(pages, { metas = {}, variance = [] } = {}) {
   const bySlug = new Map(pages.map((p) => [p.slug, p]));
@@ -43,6 +43,7 @@ export function resolveRoles(pages, { metas = {}, variance = [] } = {}) {
     if (metaArch && metaArch !== p.slug) { out[p.slug] = { role: 'sibling', archetype: metaArch, why: '_meta.json' }; continue; }
     if (m.fidelityTier && m.fidelityTier !== 'sibling') { out[p.slug] = { role: 'unique', archetype: null, why: `_meta.json ${m.fidelityTier}` }; continue; }
     if (varianceOf.has(p.slug)) { out[p.slug] = { role: 'sibling', archetype: varianceOf.get(p.slug), why: 'variance probe' }; continue; }
+    if (p.representative && p.representative !== p.slug) { out[p.slug] = { role: 'sibling', archetype: p.representative, why: 'state representative' }; continue; }
     const arcs = (!p.prototypePath && groups.get(p.template)) || [];
     if (arcs.length) { const a = arcs.find((x) => x.variant && x.variant === p.variant) || arcs[0]; out[p.slug] = { role: 'sibling', archetype: a.slug, why: `template ${p.template}` }; continue; }
     out[p.slug] = { role: 'unique', archetype: null, why: p.prototypePath ? 'prototyped' : 'no archetype' };

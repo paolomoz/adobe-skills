@@ -137,8 +137,7 @@ Walk `plan.json.steps` in order (representative pages first). For each page:
    `edsBlockName` (do not recreate). **The brief MUST carry the Experience Workspace
    editability contract** (deploy SKILL.md § 8, EW1–EW10): every converted block
    moves authored elements into wrappers (never rebuilds from text) and passes the
-   EW gate (`block-roundtrip --ew`) before it counts as delivered — a brief without
-   it skipped the contract on 27/27 blocks of a real site. **The brief also carries
+   EW gate (`block-roundtrip --ew`) before it counts as delivered. **The brief also carries
    the archetype's `captureState[].restoreAtDelivery` list** (replica `progress.json`):
    a freeze the gate needed (video at frame 0, carousel on slide 1) is a behaviour to
    deliver, never the spec (`../replica/reference/recreation-procedure.md § Carousels`).
@@ -152,9 +151,8 @@ Walk `plan.json.steps` in order (representative pages first). For each page:
    locale shell that is not a page get one more metadata block row at write time —
    `<div><div>Robots</div><div>noindex</div></div>` (renders
    `<meta name="robots" content="noindex">`). Without it the platform's index of
-   published documents, and the `/sitemap.xml` it serves, list them as pages: a
-   recorded hands-off run served 58 sitemap urls for a 36-page site (every page
-   plus 22 chrome documents). Phase D verifies the served sitemap.
+   published documents, and the `/sitemap.xml` it serves, list them as pages.
+   Phase D verifies the served sitemap.
 
    **`content-pending` pages** (archetypes-only): no migrated HTML — skip the
    document push entirely (no shell/placeholder), record `content-pending`, surface
@@ -254,6 +252,15 @@ rounds, pixel loops, Playwright captures, deploy batches) goes through
 `--max`); never two long instruments as parallel tool calls in one turn, never
 two `wait`s in one command.
 
+**Template waves (#146)** — a gated template's remaining siblings, at scale: one template per
+wave (≤ ~135 pages). Register the captures (`node skills/stardust/scripts/state.mjs add
+--slugs-file <f> --type <t> --template <t> --representative <archetype>`), sort them (census +
+variance probe, migrate `fidelity-tiers.md § Sibling variance probe`), encode with
+`node skills/rollout/scripts/wave-encode.mjs` (import → `--media` hook → links → sanitise; its
+`changed.txt` feeds `deploy-batch.mjs --paths`), mark the coverage rows `deployed`, then screen and
+gate with `gate-all.mjs --only <the wave's slugs>` (no state copy; replica
+`source-fidelity-gate.md § The all-pages published-origin gate`). State advances after the gate.
+
 **Wave close (#145).** Every wave (a cluster unit, a sibling batch, a later batch
 of a delivered template) ends with one pass over the WHOLE tree —
 `node skills/deploy/scripts/localize-links.mjs --source-host <live-host> --content
@@ -280,9 +287,7 @@ they MUST be published or the chrome 404s sitewide).
 `.hlxignore`, so `site/sitemap.xml` is a local artifact — the EXPECTED url set.
 The platform serves its own `/sitemap.xml`, built from its index of every
 published document, chrome documents included unless each carries `Robots |
-noindex` (Phase C). A recorded hands-off run read the local file, reported
-"sitemap 36 urls" and shipped a served sitemap of 58 (36 pages + 22 `nav` /
-`footer` documents). Two remedies, the first required:
+noindex` (Phase C). Two remedies, the first required:
 - **Authoring:** every chrome/fragment document — `/nav`, `/footer`, per-locale
   `nav-*` / `footer-*`, locale shells that are not pages — carries the metadata
   row `Robots | noindex`; a document already published without it is re-authored
@@ -320,9 +325,7 @@ never also a `/` Source row, which would shadow it); only when the source root
 itself redirects (`curl -sI <source-url>`, follow the Location chain) does the
 sheet carry `/` and `/index.html` → the landing page. Then verify
 `curl -sIL https://<branch>--<repo>--<owner>.aem.page/` ends in 200: a 404 on
-`/` fails the whole delivery after every phase has passed (recorded — a sheet
-with a row for every `.html` path and
-none for `/`).
+`/` fails the whole delivery after every phase has passed.
 
 ### Phase D2 — Dynamic features (`dynamics` Phases 4–5)
 
@@ -457,8 +460,7 @@ SOURCE shares — the same `<title>`, no description on the source either, no JS
 the source either, the same title shared by the same pages — are tagged `fixability:
 out-of-scope` with the evidence prefix `source parity:` and listed in their own report
 section: informational, excluded from the health score and the open P1/P2/P3 counts,
-never gated, never auto-fixed. A recorded hands-off run accepted 63 such findings by
-hand. Everything else routes as before (`reference/checks.md` § Source parity).
+never gated, never auto-fixed. Everything else routes as before (`reference/checks.md` § Source parity).
 
 Normalize each source's findings into the ledger with the writer:
 

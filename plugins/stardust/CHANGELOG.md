@@ -4,6 +4,49 @@ This file starts at 0.14.0. Prior versions (0.3.0 – 0.13.1) are documented in
 git history only (plus the branch-scoped notes in
 `CHANGELOG-redesign-adobecom.md` and `CHANGELOG-delivery-media-fidelity.md`).
 
+## 0.41.0 — the at-scale pilot folded in: state add, wave-scoped gating, prose census, drift, one command per wave (#146)
+
+Field learning (the same recorded replica rollout, now at template scale: 809 more pages captured, then waves of one
+template each — wave 1, 9 author pages in 35 min, clean clones; wave 2, the 134-post blog pilot, ~9 h including the
+long tail). Every step ran, but four gaps were paid by hand and three project tools carried the loop:
+
+- **Gaps fixed.** `inventory.mjs` rebuilt `rollout.json` from a fixed key list — it dropped `site.site` and reset
+  `lastRun.blocks`; now `lib.mjs mergeConfig` keeps every prior key. No script appended captured pages to
+  `state.json` (a one-off writer added 809 rows): **`state.mjs add`** registers captured slugs as `extracted` rows
+  (type, template, variant, `representative`), atomic, all-or-nothing unless `--partial`, refusing a duplicate, a
+  missing capture, a record without live-render evidence and a redirected final URL. `gate-all` selected only
+  `migrated` / `deployed` pages, so every wave gated through a hand-made state overlay: an `--only` slug whose
+  coverage row is deployed is gated whatever its state status; `gate-tier` reads the state `representative`; a
+  sibling without its own `presence.json` / `clip-allow.json` entry uses its archetype's (`sidecarFrom` on the row —
+  the pilot copied one entry per slug for 134 slugs, and a missing one read the header links MISSING on every row).
+  A list's membership hung on exact metadata (an author's posts need `Author` equal to the filter): `dynamics-check`
+  `runtime-list` now FAILS when an item the source listed is a source row the rule's selection drops.
+- **Generalised** (decided by the pilot's evidence): the **prose census** → `migrate/scripts/prose-census.mjs` — the
+  variance probe sees block selectors, never the article body; the census over all 800 captures of the template ran
+  in 10 s and listed every body pattern (CTA boxes, app form cards, embeds, code blocks, layout wrappers) before
+  cloning; rule: `fidelity-tiers.md § Sibling variance probe` (pointer: handoff § 1 row 1). The **drift diagnostic**
+  → `replica/scripts/drift.mjs` (one page, the pre-gate screen `--pages`, and `--overrides` for pixel-only rows): at
+  360 px the pixel % of a text-dense post failed on a constant 10–30 px offset set by one spacing difference near the
+  top; 26 rows were overridden with the measured step in the reason, and the screen (~6 min for 134 pages) found every
+  systemic defect before a 70-minute gate; rule: `source-fidelity-gate.md` § Pixel-only failures — a cause repeating
+  on many rows is fixed generally or kept by a named decision, never overridden page by page. The **wave runner** →
+  `rollout/scripts/wave-encode.mjs` (import into a scratch tree seeded with the delivered fragments, `--media` hook,
+  links over the whole tree, sanitise, only changed documents copied back, `changed.txt` for deploy-batch; 16 s per
+  134-page wave once media is cached, ~3 min with 2,442 first-time images); rule: rollout Phase C § Template waves.
+- **Left project-local**: the image rehost step (its file naming follows the source CMS's image handles; the
+  generic part is `da-media-upload --manifest`, reached through `--media`), the trend-snapshot and chart writers (the
+  data-fed contract of #144 already covers them), the census's keyed-row tallies (`template-parts.mjs`, #143) and the
+  importer parsers (project code, #140).
+- Pilot timings kept for planning (134 pages): deploy-batch of 143 documents at concurrency 4, 220 s; sibling-variance
+  over 134 URLs in batches of 27, ~20 min (one process died at ~20 min); gate-all 1440 structural tiers 42 min;
+  gate-all 360 escalated to 136 full rows by a sampled pixel FAIL, 2 h 22 min — screen first so the sample does not
+  escalate. Concurrency that held: deploy 4, gate 3 workers (a 4th raised 429s), one gate width at a time.
+- Tests: `inventory.test.mjs` (kept keys), `state.test.mjs` (captureProblem, planAdd, add CLI), `gate-all.test.mjs`
+  (`--only` by coverage, sidecarEntry), `gate-tier.test.mjs` (representative), `dynamics-check.test.mjs` (membership),
+  new `prose-census.test.mjs`, `drift.test.mjs`, `wave-encode.test.mjs` (end-to-end parts need the project's
+  linkedom). Prose delta −1 line / −2 words (anecdotes told again beside their CHANGELOG entries folded in rollout,
+  the gate doc and fidelity tiers).
+
 ## 0.40.0 — links re-localise at every wave close, mechanically: a repoint ledger and a done-check gap (#145)
 
 Field learning (the same recorded replica rollout, 93 delivered pages): E2 told the run to re-run `localize-links` over

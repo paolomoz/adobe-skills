@@ -717,11 +717,8 @@ evidence dir — the `pub<N>` label keeps the round apart, and a new dir would
 force a fresh live capture against the hit-minimisation rule.
 
 The prototype gate above proves the RECREATION; it does not prove the
-DELIVERED page. Local render harnesses systematically understate deltas
-because the real delivery pipeline transforms the markup — field rule
-(financial-services site, 8 pages published): a page gating at X% on the harness lands
-at X±(large) on the published origin until the transforms below are
-handled. **Only the published-origin number counts as the final gate** for
+DELIVERED page: local harnesses understate deltas because the delivery
+pipeline transforms the markup (below). **Only the published-origin number counts as the final gate** for
 a platform-delivered page: re-run the full gate (same instruments, same
 pass bar, same iteration discipline) with the live site as source and the
 published page — preview or live origin — as build. Judge the result in the
@@ -732,32 +729,21 @@ Two rules for that final run:
 
 - **Re-probe live chrome metrics at deploy time — crawl captures are the
   CONTENT source, live-now is the chrome/metrics source.** The live site
-  drifts between crawl and deploy (recorded, one day apart: header 141→106px,
-  footer links 13→16px/24px with new 24px column headings, a swapped
-  campaign hero). A deploy gated against crawl-time captures ships
-  yesterday's chrome. Immediately before the published-origin gate, re-run
+  drifts between crawl and deploy (a header changed height in one day); a
+  deploy gated against crawl-time captures ships yesterday's chrome. Immediately before the published-origin gate, re-run
   the chrome probes (anchor + crop gate, computed styles of matched
   header/footer elements, the header contract) against the live origin, never the crawl
   snapshot; mask live-content drift (campaign creatives, promo slots) out
   of the fidelity number — it is authored content, not conversion fidelity.
 - **Budget ONE anchors-driven reconcile round at the published origin.** The
   pipeline shifts vertical rhythm (section wrappers, `<p><picture>`,
-  fragment chrome): a gate-passed 8.4% prototype first published at 11.75%,
-  and two text-anchor rounds (anchor probe live-vs-published, patch section
-  paddings in block CSS, re-measure) brought it to 6.5% with exact anchor
-  parity (recorded). Treat the pre-publish harness number as provisional
+  fragment chrome); a text-anchor round (anchor probe live-vs-published, patch
+  section paddings in block CSS, re-measure) brings it back. Treat the pre-publish harness number as provisional
   and the reconcile round as expected work, not a regression.
 
-**`media-reconcile.mjs` is a delivery-chain gate, not a prototype-gate
-instrument.** It resolves the images of the DELIVERED content file
-(`content/<path>.html` — handoff contract § 1 row 7 and § 3 row C); run on a
-prototype or a migrated file it exits 1 by construction, because no content
-file exists before C-deliver, and a recorded hands-off run carried
-`media-reconcile: OPEN` on every sibling sidecar until delivery for exactly
-that reason. `gate-evidence.mjs` records `n/a: no delivered content file
-yet` (never OPEN) while the page's content file is absent and leaves the
-gate out of the sibling acceptance set; once the file exists the gate is
-required again and its verdict counts. Nothing in Phase 4 runs it.
+**`media-reconcile.mjs` is a delivery-chain gate** (handoff contract § 1 row 7
+and its acceptance line): it reads the DELIVERED content file, so nothing in
+Phase 4 runs it.
 
 Recurring EDS pipeline transforms that move the number (each recorded;
 none visible on a local harness):
@@ -786,13 +772,12 @@ none visible on a local harness):
 
 ## The all-pages published-origin gate (gate-all) — four criteria (#125), tiered (#141)
 
-Why element criteria: a recorded listing page PASSED the pixel bar at 6.7 % with every card
-clipped (CHANGELOG 0.26.0, #125) — "PASS" meant "right shapes at the right places", not "every
-element present and legible".
+Why element criteria: a listing page passed pixel at 6.7 % with every card clipped (#125).
 
 `node stardust/scripts/replica/gate-all.mjs` (project root; through `run-bg.mjs`) gates every
 page that is `deployed` in `stardust/state.json`, or `migrated` with a delivered URL (state
-`liveUrl`, else the rollout coverage row) — never a hand-made state copy. Workers keep their
+`liveUrl`, else the rollout coverage row) — never a hand-made state copy; a wave's `--only` slugs
+need only a deployed coverage row (#146). Workers keep their
 browsers across pages; the probes load each side once and settle it the same way
 (`measure-live.mjs`); the served side is measured decorated or not at all (a 429 / 5xx or an
 unloaded block is retried with back-off, then the row is an `error`, never a FAIL). It writes
@@ -841,7 +826,8 @@ without any table the `gate.sh` logs stand in and `--check` names the missing ta
 eval requires both summaries with a row per page. The pixel-only verdict (1 + 2) is
 recorded beside the full one per page and in the totals: every run is calibration data. Sidecars in the gate dir, each entry documented: `masks.json` (printed
 on the verdict, never reported unmasked), `overrides.json` (shown BESIDE the measured number,
-never replacing it), `clip-allow.json`, `presence.json`, `units.json`. Origin: the frozen baseline
+never replacing it), `clip-allow.json`, `presence.json` (a sibling without an entry uses its
+archetype's, `sidecarFrom` on the row, #146), `units.json`. Origin: the frozen baseline
 (#138) when present, else a live stitch (consent: live-session's built-ins, `--consent` /
 `--dismiss` for a site's own controls, both sides) → previous origin (`--recapture-origin`) →
 crawl fullPage screenshot (`crawl-fullpage`, asymmetric, flagged). **Browser tier:** the probes elect window-free real Chrome, else bundled
@@ -850,6 +836,14 @@ calibration line).
 `--eds-host` gates a code branch against the same content (branch hosts
 serve the LITERAL branch name — `fix/x` → push a mirror `fix-x`). Read a finding as one crop of
 the two captures at the row's band, never the whole pages.
+
+**Pixel-only failures (#146).** A text-dense page fails pixel on a constant offset — one spacing
+difference near the top moves every later line. Screen a wave before gating it (`drift.mjs --pages`,
+both widths: the steps name the element at fault, and a sampled pixel FAIL escalates every sibling to
+a full row). A full row failing on pixel ALONE gets its override from `drift.mjs --overrides`, which
+writes the measured steps into the reason; a cause shared by many rows is fixed in the block or the
+encoder and re-gated, or kept by a named decision (`--decision`) — never overridden page by page.
+Content, clip, height or units failing is never a drift override.
 
 **What a failing row means (#126).** The row's evidence decides the fix, mechanically: clip
 groups, HIDDEN links or unit deltas confined to one block → fix the BLOCK (CSS or encoder) and

@@ -10,7 +10,9 @@
  * these tables as the source of record; a page without a row is ungated.
  *
  * Published pages: state pages at `deployed`, or at `migrated` with a delivered URL (state `liveUrl`, else the
- * rollout coverage row's `delivery.deployedUrl` when it is deployed / verified) — no hand-made state copy.
+ * rollout coverage row's `delivery.deployedUrl` when it is deployed / verified) — no hand-made state copy; an
+ * --only slug needs only the deployed coverage row (a wave before state advances, #146). presence.json and
+ * clip-allow.json: a sibling without its own entry uses its archetype's (the row records `sidecarFrom`).
  * The template for unit families is the coverage `templateId` and the state `template`, both tried.
  *
  * TIERS (#141; the rule's home: source-fidelity-gate.md § The all-pages published-origin gate; pure parts in
@@ -43,7 +45,7 @@
  *
  * Requires playwright, pixelmatch, pngjs (project devDependencies); stitch-shot.mjs, pixel-compare.mjs and
  * gate-tier.mjs next to this file; the diff skill's scripts dir alongside. Exit: 0 all PASS (overrides count),
- * 2 any FAIL, 1 error. `verdict`, `formatSummary`, `parseArgs`, `selectPages`, `totalsOf`, `plainUrl` are exported.
+ * 2 any FAIL, 1 error. `verdict`, `formatSummary`, `parseArgs`, `selectPages`, `sidecarEntry`, `totalsOf`, `plainUrl` are exported.
  */
 import { spawn } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
@@ -61,7 +63,8 @@ Usage: node gate-all.mjs [options]   (from the project root)
   --coverage <file>         stardust/rollout/coverage/pages.json (delivered URL + templateId per page)
   --out <dir>               stardust/replica/gates/all-<width>
   --width <px>              1440
-  --only <slug,…>           subset → runs/<ts>-<slug>.json (summary.* untouched)
+  --only <slug,…>           subset → runs/<ts>-<slug>.json (summary.* untouched); a named slug whose coverage
+                            row is deployed / verified is gated whatever its state status (a wave, #146)
   --skip-existing           reuse captures (and the origin probe inventory) in the page dir
   --recapture-eds           (with --skip-existing) re-shoot eds.png only
   --recapture-origin        re-shoot origin.png (previous kept on failure)
@@ -188,10 +191,11 @@ export function totalsOf(rows) {
 
 /**
  * The published selection (#141): state pages at `deployed`, or at `migrated` with a delivered URL — state
- * `liveUrl`, else the coverage row's `delivery.deployedUrl` while it is deployed / verified. → pages with
- * liveUrl, deployedPath, templates (coverage templateId + state template, for unit families).
+ * `liveUrl`, else the coverage row's `delivery.deployedUrl` while it is deployed / verified. A slug named in
+ * `only` (a wave, #146) is selected by its coverage row alone, whatever its state status — no state overlay.
+ * → pages with liveUrl, deployedPath, templates (coverage templateId + state template, for unit families).
  */
-export function selectPages(statePages, coveragePages = []) {
+export function selectPages(statePages, coveragePages = [], only = null) {
   const cov = new Map((coveragePages || []).map((c) => [c.slug, c]));
   const out = [];
   for (const p of statePages || []) {
@@ -199,10 +203,22 @@ export function selectPages(statePages, coveragePages = []) {
     const c = cov.get(p.slug); const d = c && c.delivery;
     const covUrl = d && ['deployed', 'verified'].includes(d.status) ? d.deployedUrl || null : null;
     const liveUrl = p.liveUrl || covUrl;
-    if (!liveUrl || !['deployed', 'migrated'].includes(p.status)) continue; // a page state never migrated (a redirect source) is no row
+    const named = !!(only && only.includes(p.slug) && covUrl);
+    if (!liveUrl || !(named || ['deployed', 'migrated'].includes(p.status))) continue; // a page state never migrated (a redirect source) is no row
     out.push({ ...p, liveUrl, deployedPath: p.deployedPath || (c && c.path) || null, templates: [...new Set([c && c.templateId, p.template].filter(Boolean))] });
   }
   return out;
+}
+
+/**
+ * A page's presence.json / clip-allow.json entry (#146): its own, else its archetype's when it is a sibling — chrome
+ * regions and allowances are the template's, so a wave never copies them per slug. Overrides and masks never inherit.
+ * → { entry, from } (`from` = the archetype slug when inherited).
+ */
+export function sidecarEntry(map, slug, role) {
+  if (map && map[slug]) return { entry: map[slug], from: null };
+  const arch = role && role.role === 'sibling' ? role.archetype : null;
+  return arch && map && map[arch] ? { entry: map[arch], from: arch } : { entry: null, from: null };
 }
 
 /** The delivered document of a served page: `/x` → `/x.plain.html`, `/` and `/x/` → `…/index.plain.html`. */
@@ -295,7 +311,7 @@ async function main() {
   const state = readJson(opts.state);
   const all = opts.stage === 'prototype'
     ? (state.pages || []).filter((p) => p.prototypePath && p.url).map((p) => ({ ...p, liveUrl: `${opts.protoBase || 'http://localhost:8791'}/${basename(p.prototypePath)}`, templates: [p.template].filter(Boolean) }))
-    : selectPages(state.pages, (readJson(opts.coverage, {}) || {}).pages || []);
+    : selectPages(state.pages, (readJson(opts.coverage, {}) || {}).pages || [], opts.only);
   if (opts.stage === 'prototype' && !opts.protoBase) console.error('gate-all: --stage prototype without --proto-base — assuming http://localhost:8791 (serve the prototypes dir there, replica SKILL.md § Phase 4)');
   const pages = opts.only ? all.filter((p) => opts.only.includes(p.slug)) : all;
   if (!pages.length) { console.error('gate-all: no deployed pages selected (state status deployed, or migrated with a delivered URL: state liveUrl or the coverage row)'); process.exit(1); }
@@ -375,7 +391,7 @@ async function main() {
   // inventories (unit-geometry) on the same settled page; the outputs keep the CLIs' JSON shapes.
   async function probe(w, p) {
     const d = dir(p); mkdirSync(d, { recursive: true });
-    const pr = PRESENCE[p.slug] || {};
+    const pr = sidecar(PRESENCE, p).entry || {};
     const [mainO, mainE] = pr.main ? [pr.main.split('=')[0], pr.main.split('=')[1] || pr.main.split('=')[0]] : [null, null];
     const pairs = (pr.variable || []).map((s) => s.split('=')); const varO = pairs.map((x) => x[0]); const varE = pairs.map((x) => x[1] || x[0]);
     const units = unitsOf(p); const n = units.length ? Math.max(...units.map((x) => x.n)) : 1;
@@ -442,6 +458,7 @@ async function main() {
   // ---- tiers (#141) ----
   const metas = loadMetas('stardust/migrated');
   const roles = resolveRoles((state.pages || []).filter((p) => p.url), { metas, variance: jsonFiles(opts.variance).map((f) => readJson(f)).filter(Boolean) });
+  function sidecar(map, p) { return sidecarEntry(map, p.slug, roles[p.slug]); }
   const importCheck = indexImportCheck(jsonFiles(opts.importCheck || 'stardust/migrate/import-check').map((f) => readJson(f, [])));
   const prior = priorRows(opts.out);
   const bySlug = new Map(all.map((p) => [p.slug, p]));
@@ -453,12 +470,13 @@ async function main() {
   const rowOf = (p) => {
     const r = results[p.slug] || {}; const px = r.pixel || {}; const pl = plan[p.slug] || { gateTier: 'full', reason: null };
     const structural = pl.gateTier === 'structural' ? { originH: r.heights ? r.heights.origin : null, edsH: r.heights ? r.heights.eds : null, skeleton: pl.skeleton ? { ok: pl.skeleton.orderOk, reason: pl.skeleton.reason } : null } : null;
-    const v = verdict({ pixel: px, clip: r.clip && r.clip.counts ? r.clip : null, content: r.content || null, units: r.units || null, override: OVERRIDES[p.slug] || null, allowance: (CLIP_ALLOW[p.slug] || {}).max || 0, structural }, { threshold: opts.threshold, heightTol: opts.heightTol, clipMax: opts.clipMax, clipOn: opts.clip, contentOn: opts.content });
+    const ca = sidecar(CLIP_ALLOW, p); const prs = sidecar(PRESENCE, p);
+    const v = verdict({ pixel: px, clip: r.clip && r.clip.counts ? r.clip : null, content: r.content || null, units: r.units || null, override: OVERRIDES[p.slug] || null, allowance: (ca.entry || {}).max || 0, structural }, { threshold: opts.threshold, heightTol: opts.heightTol, clipMax: opts.clipMax, clipOn: opts.clip, contentOn: opts.content });
     const role = roles[p.slug] || {};
     return { slug: p.slug, path: p.deployedPath || new URL(p.liveUrl).pathname, template: p.templates[0] || p.template, tier: p.fidelityTier || role.role || null, gateTier: pl.gateTier, tierReason: pl.reason, archetype: role.archetype || null,
       skeleton: pl.skeleton ? { orderOk: pl.skeleton.orderOk, newTokens: pl.skeleton.newTokens, missing: pl.skeleton.missing } : null, origin: r.origin && r.origin.instrument, originAsymmetric: !!(r.origin && r.origin.asymmetric), eds: r.eds && r.eds.instrument,
       pct: structural ? null : px.pct ?? null, textPct: structural ? null : px.textPct ?? null, heightDelta: structural ? v.heightDelta : px.heightDelta ?? null, ...v,
-      clipGroups: r.clip && r.clip.groups ? r.clip.groups.filter((g) => !g.advisory).slice(0, 6) : [], clipAllowReason: (CLIP_ALLOW[p.slug] || {}).reason || null,
+      clipGroups: r.clip && r.clip.groups ? r.clip.groups.filter((g) => !g.advisory).slice(0, 6) : [], clipAllowReason: (ca.entry || {}).reason || null, sidecarFrom: ca.from || prs.from || null,
       content: r.content && r.content.totals ? { missing: r.content.totals.missing, hidden: r.content.totals.hidden, controlState: r.content.totals.controlState, missingButtons: r.content.totals.missingButtons, hiddenButtons: r.content.totals.hiddenButtons, findings: r.content.totals.findings, scope: r.content.scope, variable: r.content.variable } : null,
       units: r.units && r.units.verdict ? r.units.verdict : null, unitsRequired: !!(r.units && r.units.required), unitsError: (r.units && r.units.error) || null,
       browser: (r.content && r.content.tier) || (r.clip && r.clip.tier) || null,

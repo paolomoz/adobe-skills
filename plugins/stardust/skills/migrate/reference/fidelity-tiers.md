@@ -28,13 +28,8 @@ re-check only what varies per page.**
 ## Sibling variance probe (template constancy is measured, not assumed)
 
 "Same template" is a hypothesis the crawl JSON cannot confirm: eight siblings
-of one gated archetype varied in ways no structure capture showed — a compact
-hero template (441 vs 528px, a wider card, a smaller logo), an INVERTED hero
-scrim (0.6→0.1 vs 0.1→0.5), tier lists split into two visual families
-(arrow-image `::before` rows vs plain discs), terms sections in three shapes
-(h2+paragraph, h2+list, inline-bold prefix), and three pages reusing another
-page's hero image (the source's own choice — replicate, don't "fix"). Every
-one surfaced late, at the pixel gate, as rework on an already-cloned page.
+of one gated archetype varied in hero size and scrim, list mechanism and terms
+shape — each surfaced late, at the pixel gate, as rework on a cloned page.
 
 **Before generating a template's siblings, run ONE automated probe of the
 template-defining computed values on every sibling's live page and diff
@@ -52,6 +47,13 @@ first heading and image, list-style and `::before` mechanism, and the number
 of distinct style families among the matches; plus the top-level section
 list. Pass the archetype's own block selectors as probes — the defaults
 (first section, most-repeated class, `li`) are a fallback.
+
+**A template with authored bodies (articles, posts) also runs the prose census
+before cloning** (#146) — the probes see the chrome, never what authors pasted:
+`node scripts/migrate/prose-census.mjs --body <body root> --state-template <t>
+--known <kinds.json>` over EVERY capture of the template, the encoder's mapped
+kinds in `--known`. Each UNMAPPED signature is mapped in the encoder (a parser, a
+look, default content) before the first wave; its JSON sits beside the probe's.
 
 Reading it: **every delta is first-class work, budgeted before the clone,
 not an edge case.** A hero height/scrim delta → a hero VARIANT class
@@ -129,8 +131,5 @@ re-forking its siblings).
 
 ## Why declared, not inferred
 
-A tier the reviewer can read is a tier the reviewer can challenge. The migration
-prompt's "invoke prototype, never hand-author" rule is really "every page is at
-least sibling-tier — forked from a craft-gated archetype". Declaring the tier per
-page turns that from a hope into an auditable record, and turns the
-quality/coverage trade from an accident into a decision.
+A declared tier is auditable: "invoke prototype, never hand-author" means every
+page is at least sibling-tier, and the quality/coverage trade is a decision.

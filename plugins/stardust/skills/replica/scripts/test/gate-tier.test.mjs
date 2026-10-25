@@ -29,6 +29,12 @@ check('resolveRoles: template group (variant first), variance JSON, _meta.json, 
   assert.equal(resolveRoles([page('lone', '/lone', '/lone#1')]).lone.why, 'no archetype');
 });
 
+check('resolveRoles: the state row\'s representative names the archetype (state.mjs add, #146)', () => {
+  const r = resolveRoles([page('post-a', '/post', '/post#1', true), { ...page('post-n', null, null), representative: 'post-a' }]);
+  assert.deepEqual([r['post-n'].role, r['post-n'].archetype, r['post-n'].why], ['sibling', 'post-a', 'state representative']);
+  assert.equal(r['post-a'].role, 'archetype');
+});
+
 const doc = (...secs) => secs.map((blocks) => `<div>${blocks.map((b) => (b ? `<div class="${b}"><div><div><p>x</p></div></div></div>` : '<p>text</p>')).join('')}</div>`).join('\n');
 check('parseSkeleton: sections, blocks in order, variants sorted, repeats collapsed, metadata skipped, nested divs ignored', () => {
   const s = parseSkeleton(doc(['hero dark', null], ['cards', 'cards', 'columns wide center'], ['section-metadata', 'metadata']));

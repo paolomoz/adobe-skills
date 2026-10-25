@@ -64,7 +64,8 @@ one optional top-level key, `handsOff` (after `direction`; see
 § Flow keys). `site.captureGaps` (optional, written by `extract --prep`
 from `_crawl-log.json#captureGaps`): `[{ root, slug, linked, uncaptured:
 [<path>…] }]` per captured locale root — uncaptured targets never become
-`pages[]` rows.
+`pages[]` rows. A page captured later becomes a row through `state.mjs add`
+(#146), which may set `representative`: the archetype slug a sibling clones.
 
 ---
 

@@ -13,7 +13,7 @@ import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { formatSummary, parseArgs, plainUrl, selectPages, totalsOf, verdict } from '../gate-all.mjs';
+import { formatSummary, parseArgs, plainUrl, selectPages, sidecarEntry, totalsOf, verdict } from '../gate-all.mjs';
 
 // pixel-compare imports pngjs at module level (a project devDependency, absent in the plugin checkout):
 // import it lazily and skip its one check where it does not resolve, like the other browser/dep-bound tests.
@@ -135,6 +135,19 @@ check('selectPages: deployed, or migrated with a state or coverage URL — no st
   const sel = selectPages(st, cov);
   assert.deepEqual(sel.map((p) => p.slug), ['a', 'b'], 'c has no delivered URL; d is not migrated in state (a redirect source the coverage still lists)');
   assert.equal(sel[1].liveUrl, 'https://e.test/b'); assert.equal(sel[1].deployedPath, '/b'); assert.deepEqual(sel[1].templates, ['b-post', '/b/post']);
+});
+check('selectPages --only (#146): a named slug with a deployed coverage row is gated whatever its state status; unnamed rows keep the rule', () => {
+  const st = [{ slug: 'w1', url: 'https://o.test/w1', status: 'extracted' }, { slug: 'w2', url: 'https://o.test/w2', status: 'extracted' }, { slug: 'w3', url: 'https://o.test/w3', status: 'extracted' }];
+  const cov = [{ slug: 'w1', delivery: { status: 'deployed', deployedUrl: 'https://e.test/w1' } }, { slug: 'w2', delivery: { status: 'content-pending', deployedUrl: null } }, { slug: 'w3', delivery: { status: 'deployed', deployedUrl: 'https://e.test/w3' } }];
+  assert.deepEqual(selectPages(st, cov, ['w1', 'w2']).map((p) => p.slug), ['w1'], 'w2 is not delivered; w3 is not named');
+  assert.deepEqual(selectPages(st, cov).map((p) => p.slug), []);
+});
+check('sidecarEntry (#146): own entry first, else the archetype\'s for a sibling, never for a unique page', () => {
+  const map = { arch: { max: 2 }, own: { max: 1 } };
+  assert.deepEqual(sidecarEntry(map, 'own', { role: 'sibling', archetype: 'arch' }), { entry: { max: 1 }, from: null });
+  assert.deepEqual(sidecarEntry(map, 'sib', { role: 'sibling', archetype: 'arch' }), { entry: { max: 2 }, from: 'arch' });
+  assert.deepEqual(sidecarEntry(map, 'u', { role: 'unique', archetype: null }), { entry: null, from: null });
+  assert.deepEqual(sidecarEntry({}, 'sib', undefined), { entry: null, from: null });
 });
 check('plainUrl and parseArgs (#141 flags): the delivered document, --sample all turns tiers off, legacy concurrency aliases', () => {
   assert.equal(plainUrl('https://e.test/blog/x'), 'https://e.test/blog/x.plain.html'); assert.equal(plainUrl('https://e.test/'), 'https://e.test/index.plain.html');

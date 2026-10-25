@@ -231,6 +231,16 @@ check('judgeRuntimeList: wrong order or a wrong page size against the rule FAILS
   assert.equal(v.pass, false); assert.match(v.detail, /order differs from the source/);
 });
 
+check('judgeRuntimeList (#146): a delivered member the source listed but the filter drops (metadata spelled otherwise) FAILS', () => {
+  const author = { type: 'runtime-list', path: '/author/x', block: 'article-list', source: '/blog.json', prefix: ['/blog/'], filter: { category: 'cases' }, sort: 'published', limit: 1 };
+  const v = judgeRuntimeList({ requested: true, rendered: ['/blog/c'], rows: ROWS }, { ...author, expectItems: ['/blog/c', '/blog/d', '/blog/zz'] });
+  assert.equal(v.pass, false); assert.match(v.detail, /delivered source item\(s\) the rule drops: \/blog\/d \(category=""\)/);
+  const ok = judgeRuntimeList({ requested: true, rendered: ['/blog/c'], rows: ROWS }, { ...author, expectItems: ['/blog/c', '/blog/zz'] });
+  assert.equal(ok.pass, true, ok.detail);
+  const sliced = judgeRuntimeList({ requested: true, rendered: ['/blog/a'], rows: ROWS }, { type: 'runtime-list', path: '/', source: '/blog.json', prefix: ['/blog/'], sort: 'published', limit: 1, expectItems: ['/blog/a', '/blog/b'] });
+  assert.equal(sliced.pass, true, 'an item past the slice is not a membership loss');
+});
+
 check('missingListChecks: an index-backed / data-fed L or R feature without a runtime-list check is named; others are not', () => {
   const features = [
     { id: 'lists', disposition: 'index-backed', class: 'L', status: 'done', checks: [{ type: 'dom-count' }] },

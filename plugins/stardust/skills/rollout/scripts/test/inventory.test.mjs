@@ -151,6 +151,17 @@ check('archetypes-only mode: a content-pending sibling inherits the archetype\'s
   assert.match(r.stdout, /^Widgets {5}1 distinct \(tour-finder\) on 2 pages/m, r.stdout);
 });
 
+check('rollout.json: a re-run keeps the prior file\'s keys — site keys a later step wrote, lastRun.blocks, extra top-level keys (#146)', () => {
+  const cfg = json('rollout.json');
+  cfg.site.site = 'my-site'; cfg.site.da = { org: 'o', site: 's', ref: 'main' }; cfg.lastRun.blocks = { total: 7, converted: 7, pending: 0 }; cfg.lastRun.verifyFailures = 2; cfg.waves = [1, 2];
+  writeFileSync(join(out, 'rollout.json'), JSON.stringify(cfg));
+  const r = run(); assert.equal(r.status, 0, r.stderr);
+  const after = json('rollout.json');
+  assert.equal(after.site.site, 'my-site'); assert.deepEqual(after.site.da, { org: 'o', site: 's', ref: 'main' }); assert.equal(after.site.sourceUrl, 'https://example.test');
+  assert.deepEqual(after.lastRun.blocks, { total: 7, converted: 7, pending: 0 }); assert.equal(after.lastRun.verifyFailures, 2); assert.deepEqual(after.waves, [1, 2]);
+  assert.equal(after._provenance.writtenBy, 'stardust:rollout/inventory'); assert.notEqual(after.lastRun.at, cfg.lastRun.at);
+});
+
 rmSync(root, { recursive: true, force: true });
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 process.exitCode = failed ? 1 : 0;
