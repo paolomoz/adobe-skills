@@ -31,6 +31,11 @@
  * element the script removed with `WebImporter.DOMUtils.remove(…, selectors)`, or matched by a
  * `report.deviations[]` entry ({ kind, selector | text, reason }), is a declared drop; any other
  * missing item fails the page (exit 2).
+ * Template parts authored once (#143): a result whose path starts `/fragments/` is a fragment
+ * document, written once per run — the same path emitted with other content by a later page fails
+ * that page (the part is not verbatim). The count credits every fragment the page uses: the
+ * `/fragments/` links in its document plus `report.fragments[]` (parts template code injects), read
+ * from this run, else `<out><path>.html`; a fragment found nowhere fails the page.
  *
  * Usage:
  *   node import-run.mjs --template <id> --slugs a,b [options]
@@ -388,14 +393,20 @@ export function inventoryOf(root, pageUrl, declaredEls = new Set(), declaredText
   return inv;
 }
 
-/** Document side of the count: its normalised text, href keys and image keys. */
-export function docFacts(document, pageUrl) {
-  const main = document.querySelector('main') || document.body;
+/** Document side of the count: its normalised text, href keys and image keys — plus its fragments' (#143). */
+export function docFacts(document, pageUrl, fragments = []) {
+  const roots = [document, ...fragments].map((d) => d.querySelector('main') || d.body);
   return {
-    text: norm(main.textContent),
-    hrefs: new Set([...main.querySelectorAll('a[href]')].map((a) => hrefKey(a.getAttribute('href'), pageUrl)).filter(Boolean)),
-    images: new Set([...main.querySelectorAll('img')].map((i) => imageKey(i.getAttribute('src'))).filter(Boolean)),
+    text: roots.map((m) => norm(m.textContent)).join(' \u0000 '),
+    hrefs: new Set(roots.flatMap((m) => [...m.querySelectorAll('a[href]')].map((a) => hrefKey(a.getAttribute('href'), pageUrl))).filter(Boolean)),
+    images: new Set(roots.flatMap((m) => [...m.querySelectorAll('img')].map((i) => imageKey(i.getAttribute('src')))).filter(Boolean)),
   };
+}
+
+/** The fragment paths a DA document uses: its `/fragments/` links (same-site or root-relative) + the injected ones. */
+export function fragmentPaths(html, injected = []) {
+  const linked = [...String(html).matchAll(/href="(?:https?:\/\/[^"/]+)?(\/fragments\/[^"#?]+)"/g)].map((m) => m[1].replace(/\.html$/, '').replace(/\/+$/, ''));
+  return [...new Set([...linked, ...[].concat(injected || [])])];
 }
 
 const ATOM = 'h1,h2,h3,h4,h5,h6,p,li,dt,dd,blockquote,pre,td,th';
@@ -455,8 +466,11 @@ async function importOne({ parseHTML, mod, tpl, page, o, external }) {
   } else throw new Error('the import script exports neither transform nor transformDOM');
   results = [].concat(results).filter(Boolean);
   if (!results.length || !results[0].element) throw new Error('transform returned no element');
-  const docs = results.map((r) => ({ path: sanitizePath(r.path || new URL(page.url).pathname), html: toDaDocument(r.element), report: r.report || {} }));
-  // acceptance: the pristine capture, scoped, against the main document
+  const all = results.map((r) => ({ path: sanitizePath(r.path || new URL(page.url).pathname), html: toDaDocument(r.element), report: r.report || {} }));
+  const isFragment = (d) => d.path.startsWith('/fragments/');
+  const docs = [...all.filter((d) => !isFragment(d)), ...all.filter(isFragment)];
+  if (isFragment(docs[0])) throw new Error('transform returned only fragment documents');
+  // acceptance: the pristine capture, scoped, against the main document and the fragments it uses
   const pristine = parseHTML(html).document;
   const scope = docs[0].report.scope || tpl.scope;
   const root = (scope && pristine.querySelector(scope)) || pristine.querySelector('main') || pristine.body;
@@ -467,7 +481,21 @@ async function importOne({ parseHTML, mod, tpl, page, o, external }) {
   }
   const declaredTexts = devs.filter((d) => d.text).map((d) => norm(d.text));
   const src = inventoryOf(root, page.url, declaredEls, declaredTexts);
-  const cov = checkCoverage(src, docFacts(parseHTML(docs[0].html).document, page.url));
+  const frags = []; const fragMissing = [];
+  for (const p of fragmentPaths(docs[0].html, docs[0].report.fragments)) {
+    const own = docs.find((d) => d.path === p);
+    const file = join(o.out, `${p}.html`);
+    const fhtml = own ? own.html : (o.written.get(p)?.html ?? (existsSync(file) ? readFileSync(file, 'utf8') : null));
+    if (fhtml == null) fragMissing.push({ role: 'fragment', key: `${p} — no fragment document (emit it or create ${file})` });
+    else frags.push(parseHTML(fhtml).document);
+  }
+  for (const d of docs.filter(isFragment)) {
+    const prev = o.written.get(d.path);
+    if (prev && prev.html !== d.html) fragMissing.push({ role: 'fragment', key: `${d.path} differs from the copy ${prev.slug} emitted — not a verbatim part` });
+  }
+  const cov = checkCoverage(src, docFacts(parseHTML(docs[0].html).document, page.url, frags));
+  cov.missing.push(...fragMissing);
+  cov.fragments = frags.length;
   return { docs, cov, deviations: devs };
 }
 
@@ -506,11 +534,17 @@ export async function main(argv) {
   const external = o['source-json'] ? readJson(o['source-json']) : null;
   const max = Number(o['max-lines']);
   const tally = { imported: 0, failed: 0, errors: 0, same: 0, differ: 0 }; const rows = [];
+  o.written = new Map();
   for (const page of todo) {
     try {
       const { docs, cov } = await importOne({ parseHTML, mod, tpl, page, o, external });
       const files = docs.map((d) => join(o.out, `${d.path}.html`));
-      if (!o['dry-run']) docs.forEach((d, i) => { mkdirSync(dirname(files[i]), { recursive: true }); writeFileSync(files[i], d.html); });
+      docs.forEach((d, i) => {
+        const fragment = d.path.startsWith('/fragments/');
+        if (fragment && o.written.has(d.path)) return; // written once per run (a differing copy failed the count)
+        if (fragment) o.written.set(d.path, { html: d.html, slug: page.slug });
+        if (!o['dry-run']) { mkdirSync(dirname(files[i]), { recursive: true }); writeFileSync(files[i], d.html); }
+      });
       let cmp = '';
       let diffs = [];
       if (o.compare) {
@@ -523,7 +557,7 @@ export async function main(argv) {
       const c = cov.counts; const fmt = (r) => `${c[r][1]}/${c[r][0]}`;
       const ok = !cov.missing.length;
       tally[ok ? 'imported' : 'failed'] += 1;
-      console.log(`${ok ? 'ok   ' : 'FAIL '} ${page.slug} → ${files[0]}  h ${fmt('headings')} · text ${fmt('text')} · cta ${fmt('ctas')} · img ${fmt('images')}${cov.declared ? `  [declared ${cov.declared}]` : ''}${cmp}`);
+      console.log(`${ok ? 'ok   ' : 'FAIL '} ${page.slug} → ${files[0]}  h ${fmt('headings')} · text ${fmt('text')} · cta ${fmt('ctas')} · img ${fmt('images')}${cov.declared ? `  [declared ${cov.declared}]` : ''}${cov.fragments ? `  [fragments ${cov.fragments}]` : ''}${cmp}`);
       cov.missing.slice(0, max).forEach((m) => console.log(`        missing ${m.role}: ${m.key.length > 90 ? `${m.key.slice(0, 87)}…` : m.key}`));
       if (cov.missing.length > max) console.log(`        … ${cov.missing.length - max} more missing`);
       diffs.slice(0, max).forEach((d) => console.log(`        ${d}`));

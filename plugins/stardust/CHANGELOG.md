@@ -4,6 +4,44 @@ This file starts at 0.14.0. Prior versions (0.3.0 – 0.13.1) are documented in
 git history only (plus the branch-scoped notes in
 `CHANGELOG-redesign-adobecom.md` and `CHANGELOG-delivery-media-fidelity.md`).
 
+## 0.38.0 — a part a template repeats verbatim is authored once: fragments, `parts` rows, entity parts (#143)
+
+Field learning (the same recorded replica rollout, 93 delivered pages, 81 of them template siblings): every sibling document
+carried its template's non-page-specific parts verbatim — on posts the topic-search box, the partner promo, the platform
+banner, the disclaimer, the newsletter box and the author card (one per author, repeated on every post by that author); on
+tool articles the same sidebar set; on landing families the "how we find trends" cards, the trusted-by logos and the trial
+band. Measured before the change: 34 template parts on ≥ half of a template's pages (≥ 150 bytes) plus one per-entity part,
+4 of them shared across templates; every page owned a copy an author would edit page by page, and copies drift.
+
+- **The rule** (contract — deploy `SKILL.md` § The ENCODE contract; pointers: handoff-contract § 1 row 2, `davids-model.md`
+  D12): one fragment document per part (Robots noindex), referenced, never copied — a section or block → a `fragment`
+  block; keyed rows of a composite block → one `parts | /fragments/…` row the block expands before decorating (a page row
+  with the same key wins); a per-entity part or chrome fixed on every page → injected from page metadata. Stays per page:
+  the `<h1>` and LCP hero, internal-link lists and citable facts (#86), a page whose version differs.
+- **`rollout/scripts/template-parts.mjs`** (new): per template (`--templates` via the importer's own matching,
+  `--by-meta <key>`, or files) the sections, blocks, keyed rows and default-content runs, normalised (whitespace and
+  entities, images by file name so per-page media scopes fold, the page's own path, declared `--slot` regexes); template
+  parts at `--threshold` (0.5) with pages, share, size, versions and a home (`inject` when on every page at one position,
+  else `reference`), nesting folded to the outermost part; entity parts (each version on pages sharing one metadata value,
+  ≥ 2 values); parts shared across templates; references (fragment blocks, `parts` rows) never counted again; median
+  document bytes now and with the parts authored once.
+- **`migrate/scripts/import-run.mjs`**: a transform result under `/fragments/` is a fragment document, written once per
+  run; a later page emitting a different copy fails (not verbatim); the content count credits the fragments a page links
+  and the ones its report declares injected (`report.fragments`), read from the run or `<out>`; a missing one fails.
+- **Field run** (the same project): 12 parts chosen, 17 fragment documents (one per author for the entity part), 77
+  documents rewritten; declined with reasons — related-article lists (#86), the LCP hero's background pair, an
+  above-the-fold in-page nav, curated FAQ items, an author card on a template without Author metadata, a 2-page layout.
+  Median document per template −2 to −20 % (e.g. 27.1 → 24.8 KB, 9.9 → 7.9 KB). The importer re-emitted the 81 template
+  pages: content count 81/81 with fragments credited, structural compare 81/81 same, the emitted fragments equal to the
+  delivered ones. Two runtime traps found before the gate (for the next project's runtime): rows taken from a fragment must
+  be decorated like page rows (`wrapTextNodes` — a one-paragraph cell rendered empty without it), and a fragment's
+  metadata must share its content section (a metadata-only section reaches the page as an empty `.section`). Decorated
+  DOM vs before: 182/186 page-widths identical (4 carousel timings). Gate of record (tiered, published origin, all 93):
+  delivered 93/93 at both widths, no row worse.
+- Tests: `rollout/scripts/test/template-parts.test.mjs` (new), `migrate/scripts/test/import-run.test.mjs` (fragment paths,
+  write-once, conflict, missing fragment). Prose delta −15 words (four checklist rows that restated ENCODE / EW rules folded
+  to pointers).
+
 ## 0.37.1 — block weight: lifted cascades pruned against the delivered pages, look carry measured (#142b)
 
 Field learning (the same recorded replica rollout, 93 delivered pages): after 0.37.0 put every look of a block in one

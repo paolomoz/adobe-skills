@@ -12,7 +12,7 @@ import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
-  balancedJson, blockClass, checkCoverage, diffOutlines, extractSource, externalFor, hrefKey, imageKey,
+  balancedJson, blockClass, checkCoverage, diffOutlines, extractSource, externalFor, fragmentPaths, hrefKey, imageKey,
   matchTemplate, norm, parseArgs, sanitizePath,
 } from '../import-run.mjs';
 
@@ -117,6 +117,12 @@ test('diffOutlines: same, block shape, text, counts, section count', () => {
   assert.match(d, /section 3: only in reference/);
 });
 
+test('fragmentPaths: linked (root-relative or same-site) and injected parts, deduplicated (#143)', () => {
+  const html = '<a href="/fragments/a/b">x</a><a href="https://h.test/fragments/c.html">y</a><a href="/fragments/a/b">z</a><a href="/blog/x">w</a>';
+  assert.deepEqual(fragmentPaths(html, ['/fragments/e/f']), ['/fragments/a/b', '/fragments/c', '/fragments/e/f']);
+  assert.deepEqual(fragmentPaths('<p>none</p>'), []);
+});
+
 async function linkedomResolves() {
   try { await import('linkedom'); return true; } catch { /* try cwd */ }
   try { createRequire(join(process.cwd(), 'package.json')).resolve('linkedom'); return true; } catch { return false; }
@@ -160,4 +166,38 @@ export default { transform: ({ document, url, params }) => {
   assert.match(r.stdout, /ok {4}blog-b .*\[declared 1\]/);
   assert.match(r.stdout, /FAIL {2}blog-c[\s\S]*missing images: lost/);
   assert.match(r.stdout, /import-run post: imported 2, failed 1, errors 0, compared 1 same \/ 2 differ → content/);
+});
+
+test('template parts (#143): fragment documents written once, credited to the count, conflicts and gaps fail', async (t) => {
+  if (!(await linkedomResolves())) { t.skip('linkedom not resolvable here — run from a project copy'); return; }
+  const root = mkdtempSync(join(tmpdir(), 'import-run-parts-'));
+  const w = (rel, data) => { const f = join(root, rel); mkdirSync(dirname(f), { recursive: true }); writeFileSync(f, data); };
+  w('package.json', '{"name":"p","private":true}');
+  w('tools/importer/package.json', '{"type":"module"}');
+  w('tools/importer/page-templates.json', JSON.stringify({ templates: [{ name: 'post', patterns: ['/blog/*'] }] }));
+  w('tools/importer/import-post.js', `export default { transform: ({ document, url }) => {
+  const main = document.querySelector('main');
+  const promo = main.querySelector('.promo'); const author = main.querySelector('.author');
+  const frag = document.createElement('div'); frag.append(promo.cloneNode(true));
+  const p = document.createElement('p'); const a = document.createElement('a');
+  a.setAttribute('href', '/fragments/post/promo'); a.textContent = '/fragments/post/promo'; p.append(a);
+  promo.replaceWith(p);
+  const who = author.getAttribute('data-who'); author.remove();
+  return [{ element: main, path: new URL(url).pathname, report: { scope: 'main', fragments: ['/fragments/author/' + who] } },
+    { element: frag, path: '/fragments/post/promo' }];
+} };`);
+  const page = (title, promo, who) => `<html><body><main><h1>${title}</h1><div class="promo"><p>${promo}</p></div><div class="author" data-who="${who}"><p>${who} bio</p></div></main></body></html>`;
+  w('stardust/current/pages/blog-a.html', page('Alpha', 'Try Pro', 'ann'));
+  w('stardust/current/pages/blog-b.html', page('Beta', 'Try Pro', 'zed'));
+  w('stardust/current/pages/blog-c.html', page('Gamma', 'Try Pro Now', 'ann'));
+  w('content/fragments/author/ann.html', '<body><header></header><main><div><p>ann bio</p></div></main><footer></footer></body>');
+  w('stardust/state.json', JSON.stringify({ pages: ['a', 'b', 'c'].map((s) => ({ slug: `blog-${s}`, url: `https://s.test/blog/${s}` })) }));
+  const r = run(['--all-of', 'post'], root);
+  assert.equal(r.status, 2, r.stdout + r.stderr);
+  assert.match(r.stdout, /ok {4}blog-a .*\[fragments 2\]/);
+  assert.match(r.stdout, /FAIL {2}blog-b[\s\S]*missing fragment: \/fragments\/author\/zed — no fragment document/);
+  assert.match(r.stdout, /FAIL {2}blog-c[\s\S]*missing fragment: \/fragments\/post\/promo differs from the copy blog-a emitted/);
+  assert.match(readFileSync(join(root, 'content/fragments/post/promo.html'), 'utf8'), /Try Pro<\/p>/);
+  assert.doesNotMatch(readFileSync(join(root, 'content/fragments/post/promo.html'), 'utf8'), /Try Pro Now/);
+  assert.match(readFileSync(join(root, 'content/blog/a.html'), 'utf8'), /href="\/fragments\/post\/promo"/);
 });

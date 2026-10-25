@@ -8,9 +8,9 @@ Run the project copies under `stardust/scripts/<skill>/`. Read this before `--he
 - `deploy/content-inventory.mjs` — library (role classifier), no CLI
 - `deploy/css-as-text.mjs` — library (CSS-as-content test), no CLI
 - `deploy/css-coverage.mjs` — block weight, look carry, CSS prune — `snapshot|match|prune --out <d>`
-- `deploy/da-media-upload.mjs` — rehost images — `--org --repo --scope <under media/> --dir|--manifest [--token-env|--token-file --dry-run]`; exit 3 = token halt
+- `deploy/da-media-upload.mjs` — rehost images — `--org --repo --scope <s> --dir|--manifest [--token-env|--token-file --dry-run]`; exit 3 = token halt
 - `deploy/davids-model-lint.mjs` — content-model lint — `content/ | <page>.html [--json]`
-- `deploy/deploy-batch.mjs` — resumable PUT→preview→live — `--org --repo --branch --content <d> [--no-publish] [--token-env]`; exit 1 = failures, 3 = token halt
+- `deploy/deploy-batch.mjs` — resumable PUT→preview→live — `--org --repo --branch --content <d> [--no-publish] [--token-env]`; exit 1 fail, 3 token halt
 - `deploy/diff-profiles.mjs` — library (eds|generic profiles), no CLI
 - `deploy/file-lock.mjs` — library (lock + atomic ledger merge), no CLI
 - `deploy/eds-path.mjs` — library (path contract), no CLI
@@ -26,7 +26,7 @@ Run the project copies under `stardust/scripts/<skill>/`. Read this before `--he
 - `diff/chrome-explore.mjs` — the header used: open states, close paths, motion, scroll — `<url> <out.json> [--width 1440,390]`
 - `diff/clip-probe.mjs` — text/controls cut or hidden by an overflow ancestor — `<url> [--width 1440] [--json [f]] [--advisory]`; exit 2 = clipped > 0
 - `diff/content-diff.mjs` — structural + attribute/icon diff — `<protoURL> <edsURL> [--main <sel[,sel]>] [--no-chrome] [--profile generic] [--json]`
-- `diff/content-presence.mjs` — origin vs served visible content per band — `<origin> <served> [--variable <selO=selE,…>] [--json [f]]`; exit 2 = MISSING/HIDDEN
+- `diff/content-presence.mjs` — visible content per band — `<origin> <served> [--variable <selO=selE,…>] [--json [f]]`; exit 2 = MISSING/HIDDEN
 - `diff/content-inventory.mjs` — library (classifier copy), no CLI
 - `diff/diff-profiles.mjs` — library (profiles copy), no CLI
 - `diff/live-session.mjs` — library (hardened session; `--headed` = window-free real Chrome), no CLI
@@ -41,7 +41,7 @@ Run the project copies under `stardust/scripts/<skill>/`. Read this before `--he
 - `dynamics/snapshot-api.mjs` — record same-origin API calls — `--origin <h> --calls calls.json [--out <dir>]`
 - `dynamics/snapshot-forms.mjs` — record live forms — `--urls a,b [--out data/forms]`
 - `dynamics/sync-sheets.mjs` — sheet JSON → DA + preview — `--source <o> --org --repo --paths a.json,b.json`
-- `extract/crawl.mjs` — crawler → pages, screenshots, `_crawl-log.json#captureGaps` — `--url <u> [--pages a,b] [--max 25] [--out stardust/current] [--dynamics]`
+- `extract/crawl.mjs` — crawl → pages, shots, gaps — `--url <u> [--pages a,b] [--max 25] [--out stardust/current] [--dynamics]`
 - `extract/style-census.mjs` — computed-style census (one live pass) — `[--pages <dir>|--urls a,b] [--width <px>] [--headed]`
 - `extract/thumb.mjs` — thumbnails ≤ --max-bytes — `<png|dir…> [--width 480] [--max-height <px>] [--max-bytes 150000] [--min-share 60] [--offset <px>]`
 - `migrate/import-run.mjs` — project importer → DA docs + count — `--all-of <id> [--compare content]`
@@ -93,7 +93,8 @@ Run the project copies under `stardust/scripts/<skill>/`. Read this before `--he
 - `rollout/plan.mjs` — conversion plan — `[--out <dir>] [--pending-only]`
 - `rollout/section-fidelity.mjs` — authored vs source outline — `--file <html> --source <u>|--source-file <p>`
 - `rollout/seed-redirects.mjs` — knowledge → redirects.tsv — `[--dry-run]`
-- `rollout/update-coverage.mjs` — status writer — `<slug>|--block <id> --status <s>`; `--claim <b>[/<look>] --unit <u>`; `--new <slug> --path --template --origin`
+- `rollout/template-parts.mjs` — repeated template parts — `--templates <f> | --by-meta <key>`
+- `rollout/update-coverage.mjs` — status writer — `<slug>|--block <id> --status <s>`; `--claim <b>[/<look>] --unit <u>`; `--new <slug> …`
 - `rollout/verify.mjs` — full-site verify — `[--base <u>|--root <dir>] [--all]`
 - `spec/lib.mjs` — library, no CLI
 - `spec/rules.mjs` — library (rules), no CLI
