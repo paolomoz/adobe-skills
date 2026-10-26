@@ -338,5 +338,34 @@ await checkAsync('served readiness (#141): readinessReason, backoffMs jitter bou
   await assert.rejects(session.withServedRetry(async () => { throw notFound; }, { sleep: async () => {} }), (e) => e === notFound);
 });
 
+await checkAsync('rotating content at rest (#147): settleMotionInPage lands an in-flight slide (its end handler runs), holds an endless marquee at its start, finishes what outlives the cap, clears the timers', async () => {
+  const saved = { document: globalThis.document, window: globalThis.window };
+  const cleared = []; let nextId = 40;
+  globalThis.window = { setTimeout: (fn, ms) => { setTimeout(fn, ms); nextId += 1; return nextId; }, clearTimeout: (id) => cleared.push(id), clearInterval: () => {} };
+  const anim = ({ endTime, ms = null }) => {
+    const a = { playState: 'running', currentTime: 1234, effect: { getComputedTiming: () => ({ endTime }) }, finishCalls: 0 };
+    a.finished = ms == null ? new Promise(() => {}) : new Promise((r) => { setTimeout(() => { a.playState = 'finished'; a.reset = true; r(a); }, ms); });
+    a.finish = () => { a.finishCalls += 1; a.playState = 'finished'; };
+    a.pause = () => { a.playState = 'paused'; };
+    return a;
+  };
+  try {
+    const slide = anim({ endTime: 500, ms: 30 }); const marquee = anim({ endTime: Infinity }); const stuck = anim({ endTime: 900 });
+    globalThis.document = { getAnimations: () => [slide, marquee] };
+    let r = await session.settleMotionInPage({ maxWaitMs: 1000, graceMs: 5 });
+    assert.equal(slide.reset, true, 'the slide landed on its own (finished resolved), not cut'); assert.equal(slide.finishCalls, 0);
+    assert.deepEqual([marquee.playState, marquee.currentTime], ['paused', 0], 'the marquee is held at its start');
+    assert.deepEqual([r.landed, r.forced, r.held, r.rounds], [1, 0, 1, 1]);
+    assert.equal(r.timersCleared, cleared.length, 'every timer id below the probe one is cleared'); assert.ok(cleared.includes(0) && cleared.includes(r.timersCleared - 1));
+    globalThis.document = { getAnimations: () => [stuck] };
+    r = await session.settleMotionInPage({ maxWaitMs: 20, graceMs: 1 });
+    assert.deepEqual([stuck.finishCalls, stuck.playState, r.forced], [1, 'finished', 1], 'past the cap the slide is landed by finish()');
+    globalThis.document = {};
+    r = await session.settleMotionInPage({});
+    assert.deepEqual([r.landed, r.held, r.forced], [0, 0, 0], 'no Web Animations API: timers only');
+    assert.equal(typeof (await session.settleMotion({ evaluate: async () => { throw new Error('Target closed\nstack'); } })).error, 'string', 'a closed page is a record, never a throw');
+  } finally { globalThis.document = saved.document; globalThis.window = saved.window; }
+});
+
 console.log(failed ? `\n${failed} of ${checks} checks failing` : `\nlive-session: all ${checks} checks passed`);
 process.exit(failed ? 1 : 0);

@@ -338,18 +338,18 @@ export function parseArgs(argv) {
 export async function inventorySide(browser, url, { width, locale, warmup, rootSel, variableSels, minCut, settlePasses = 4, httpError = 'measure', countWords = null, moreWords = null, eds = false, extra = [], also = null, context = null }) {
   const { ctx, page } = context ? { ctx: null, page: await context.newPage() } : await openPage(browser, { width, locale });
   try {
-    const v = await visit(page, url, { warmup, settle: { passes: settlePasses }, httpError, eds, extra });
+    const v = await visit(page, url, { warmup, settle: { passes: settlePasses }, httpError, eds, extra, motion: true });
     const inv = await page.evaluate(inPage(presenceInventoryInPage, countWords ? { rootSel, variableSels, countWords } : { rootSel, variableSels }, morePrelude(moreWords)));
     const clip = await page.evaluate(inPage(clipInventoryInPage, { minCut, rootSel: null, maxFindings: 400 }, morePrelude(moreWords)));
     const more = also ? await also(page, v) : undefined;
-    return { url, at: new Date().toISOString(), status: v.status, settlePasses: v.passes, ...inv, clip: { counts: clip.counts, groups: summarize(clip.findings), findings: clip.findings }, textBoxes: clip.textBoxes, ...(also ? { also: more } : {}) };
+    return { url, at: new Date().toISOString(), status: v.status, settlePasses: v.passes, motion: v.motion, ...inv, clip: { counts: clip.counts, groups: summarize(clip.findings), findings: clip.findings }, textBoxes: clip.textBoxes, ...(also ? { also: more } : {}) };
   } finally { if (ctx) await ctx.close(); else await page.close().catch(() => {}); }
 }
 
 /** The --json record (the CLI and gate-all write the same shape) + the diff it carries. */
 export function presenceReport(o, e, { width, variable = [], chrome = false, tier = null }) {
   const res = diffPresence(o, e, { chrome });
-  const strip = (side) => ({ url: side.url, at: side.at, status: side.status, settlePasses: side.settlePasses, docH: side.docH, root: side.root, items: side.items, clip: { counts: side.clip.counts, groups: side.clip.groups } });
+  const strip = (side) => ({ url: side.url, at: side.at, status: side.status, settlePasses: side.settlePasses, motion: side.motion, docH: side.docH, root: side.root, items: side.items, clip: { counts: side.clip.counts, groups: side.clip.groups } });
   const out = { _provenance: { writtenBy: 'content-presence.mjs', at: new Date().toISOString(), width, variable, tier }, origin: strip(o), eds: { ...strip(e), clip: e.clip }, bands: res.bands, findings: res.findings, totals: res.totals, textBoxes: { origin: o.textBoxes, eds: e.textBoxes } };
   return { res, out };
 }

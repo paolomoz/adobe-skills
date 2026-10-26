@@ -4,6 +4,40 @@ This file starts at 0.14.0. Prior versions (0.3.0 – 0.13.1) are documented in
 git history only (plus the branch-scoped notes in
 `CHANGELOG-redesign-adobecom.md` and `CHANGELOG-delivery-media-fidelity.md`).
 
+## 0.41.1 — rotating content measured at rest, author-pasted players keep their box, host sleep never reads as a verdict (#147)
+
+Field learning (the same template-scale rollout, waves 3–7 of ~134 posts each, after #146). Three gaps were paid by
+hand; everything else those waves met was importer rules of the project (left there):
+
+- **Rotating content made the gate non-deterministic.** A blog template's auto-advancing topic ticker, probed
+  mid-slide, read CONTROL CLIPPED 4 / HIDDEN 2 in band 1 on some captures and not others: 5 rows of 134 in one 1440
+  run, each passing on the first or second re-shot, and one row left FAIL with cause after 5 captures — a
+  `clip-allow` of 2 and a counts-only region did not absorb it. The stitch froze motion; the probes did not. Now
+  live-session `settleMotion` (one in-page routine, both sides, after the settle): an in-flight finite animation
+  lands and its end handlers run, then — synchronously — timers and intervals are cleared and endless animations
+  held at their start. measure-live `visit({ motion: true })` runs it for content-presence, clip-probe and
+  unit-geometry (gate-all's probe load); stitch-shot runs it before its CSS freeze (which used to cancel a slide
+  mid-way); `content.json` records it per side. Rule: `source-fidelity-gate.md` § Hardening rules, 5.
+- **Embeds kept the column, not the source's box.** A provider share code pasted in a post (`<iframe width="560"
+  height="315">`, 12 posts over four waves) renders at its attribute size on the source (overflowing a 360 column);
+  rendered column-wide 16:9 it moved every later line +78 px at 1440 and −135 px at 360 per player — two drift
+  overrides, one 360 row admitted at 23.68 % over the drift tool's bound. Rule: the player keeps the source's box,
+  carried on the link the auto-block reads; a template's own video box stays design (deploy SKILL.md, the
+  auto-blocked embed bullet).
+- **A host sleep read as evidence.** A ~45-minute laptop sleep hung one 1440 re-gate on stale browser connections;
+  it was killed and its rows re-run in full by hand. `run-bg.mjs` now runs a heartbeat that compares the wall clock
+  with the monotonic one (`clockGap`, `suspendWatch`, `gapsIn`): a gap is logged and kept in the job state and the
+  report names it; `wait` / `status` report a running job whose log has not grown for `--stall` minutes (default
+  10, `RUN_BG_STALL_MIN`) as STALLED. `gate-all.mjs` runs the same watch: on a gap every worker's browsers are
+  recycled and each row whose work spans it is an `error` naming the gap (`suspendRow`; never PASS / FAIL, never an
+  override pass), and the run prints the `--only` set to re-run. Rule: `source-fidelity-gate.md` § The all-pages
+  published-origin gate.
+- Tests: `live-session.test.mjs` (settleMotionInPage on stub globals — the landed slide, the held marquee, the cap,
+  no Web Animations API), `run-bg.test.mjs` (clockGap, suspendWatch, gapsIn, stalledMin, the report note),
+  `gate-all.test.mjs` (suspendRow, totals, summary). stitch-shot's end-to-end checks pass with the settle (36/36 in
+  a project copy). Prose delta −6 lines / −8 words (a twice-told wait rule in rollout, the interstitial and
+  element-criteria anecdotes and the run-bg numbers told again in the stardust skill folded).
+
 ## 0.41.0 — the at-scale pilot folded in: state add, wave-scoped gating, prose census, drift, one command per wave (#146)
 
 Field learning (the same recorded replica rollout, now at template scale: 809 more pages captured, then waves of one

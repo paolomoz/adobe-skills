@@ -735,3 +735,38 @@ export async function withServedRetry(attempt, { retries = 3, sleep = (ms) => ne
   }
   throw new EdsNotReadyError(`not measurable after ${retries + 1} attempts: ${last.message}`);
 }
+
+// ---- rotating content at rest (#147) ------------------------------------------------------------
+// An auto-advancing ticker or carousel measured mid-slide reads HIDDEN / clipped on one capture and not the next
+// (recorded: 5 rows of a 134-page wave, each passing on a re-shot). Both sides are brought to rest the same way
+// before anything is measured: every finite animation in flight (a CSS transition, a slide) lands and its end
+// handlers run; then, synchronously, so no new rotation can start between the check and the hold, the pending
+// timers and intervals are cleared and every endless animation (a marquee) is held at its start. rAF-driven
+// motion is out of reach (declare its region counts-only). In-page: self-contained, Playwright-serialisable, and
+// testable with stub `document` / `window` globals.
+export async function settleMotionInPage({ maxWaitMs = 3000, graceMs = 150 } = {}) {
+  const w = window; const t0 = Date.now();
+  const anims = () => (document && typeof document.getAnimations === 'function' ? document.getAnimations() : []);
+  const endless = (a) => { try { const t = a.effect && a.effect.getComputedTiming(); return !t || !Number.isFinite(t.endTime); } catch { return true; } };
+  const flying = () => anims().filter((a) => a.playState === 'running' && !endless(a));
+  const pause = (ms) => new Promise((r) => { w.setTimeout(r, Math.max(0, ms)); });
+  let landed = 0; let rounds = 0;
+  for (let f = flying(); f.length; f = flying()) {
+    const left = maxWaitMs - (Date.now() - t0);
+    if (left <= 0) break;
+    rounds += 1; landed += f.length;
+    await Promise.race([Promise.all(f.map((a) => Promise.resolve(a.finished).catch(() => null))), pause(left)]);
+    await pause(graceMs); // the end handlers (a ticker's row reset) run before the next check
+  }
+  let forced = 0; let held = 0;
+  for (const a of flying()) { try { a.finish(); forced += 1; } catch { /* cannot land */ } }
+  for (const a of anims()) if (endless(a) && a.playState !== 'idle') { try { a.currentTime = 0; a.pause(); held += 1; } catch { /* read-only timing */ } }
+  let id = Number(w.setTimeout(() => {}, 0)); const timers = id;
+  while (id-- > 0) { w.clearTimeout(id); w.clearInterval(id); }
+  return { landed, rounds, forced, held, timersCleared: timers, waitedMs: Date.now() - t0 };
+}
+
+/** Bring a settled page's motion to rest before a probe measures it (#147) → settleMotionInPage's record. */
+export async function settleMotion(page, opts = {}) {
+  return page.evaluate(settleMotionInPage, opts).catch((e) => ({ error: String(e.message || e).split('\n')[0] }));
+}

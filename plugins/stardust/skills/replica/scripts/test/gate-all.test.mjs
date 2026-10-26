@@ -6,6 +6,7 @@
 // --out derived from --width; --help in an empty cwd; pixel-compare's textBoxPct over a synthetic diff. And (#141)
 // the structural row (height from the probes, skeleton, no pixel criterion), totals by gate tier, the published
 // selection without a state copy (deployed, or migrated with a state / coverage URL) and the delivered-document URL.
+// (#147) a row spanning a host suspension is an ERROR — never PASS / FAIL, never an override pass.
 // Run: node <this file>.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -13,7 +14,7 @@ import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { formatSummary, parseArgs, plainUrl, selectPages, sidecarEntry, totalsOf, verdict } from '../gate-all.mjs';
+import { formatSummary, parseArgs, plainUrl, selectPages, sidecarEntry, suspendRow, totalsOf, verdict } from '../gate-all.mjs';
 
 // pixel-compare imports pngjs at module level (a project devDependency, absent in the plugin checkout):
 // import it lazily and skip its one check where it does not resolve, like the other browser/dep-bound tests.
@@ -83,6 +84,18 @@ check('formatSummary: header, calibration line, rows, asymmetric flag, override 
   assert.match(md, /\*\*1 PASS \/ 2 FAIL \/ 0 error of 3\*\*/); assert.match(md, /pixel-only verdict \(criteria 1\+2\): \*\*2 PASS\*\*; full verdict \(1–4\): \*\*1 PASS\*\*/);
   assert.match(md, /\| `\/a` \|.*FAIL \(elements\)/); assert.match(md, /6\.68 \(12\.3\)/); assert.match(md, /crawl-fullpage ⚠asym/); assert.match(md, /n\/a \(origin HTTP 403\)/); assert.match(md, /masked 70 rows: store notice/); assert.match(md, /→ PASS \(source capture\): live drifted/);
   assert.match(md, /off 12 hidden 2 missing 4 \|/);
+});
+check('host suspension (#147): a row spanning a gap is an ERROR naming it — not PASS, not FAIL, not an override pass', () => {
+  const gap = { from: '2026-10-26T07:23:00.000Z', to: '2026-10-26T08:08:00.000Z', fromMs: 1, toMs: 2, sleptS: 2700 };
+  const full = { slug: 'a', path: '/a', gateTier: 'full', ...verdict({ pixel: px(2, 0, 5000), clip: clip(0), content: content(0, 0) }), pct: 2, override: { verdict: 'PASS', reason: 'drift' } };
+  const structural = { slug: 'b', path: '/b', gateTier: 'structural', ...verdict({ clip: clip(4), content: content(0, 2), structural: { originH: 5000, edsH: 5000 } }) };
+  assert.equal(suspendRow(full, []), full, 'no gap: the row as measured');
+  const [a, b] = [suspendRow(full, [gap]), suspendRow(structural, [gap])];
+  for (const r of [a, b]) { assert.equal(r.pass, false); assert.equal(r.passWithOverride, false); assert.match(r.error, /host suspended 2700s at 2026-10-26T07:23:00.000Z mid-row — re-run/); assert.deepEqual(r.reasons, [r.error]); }
+  const t = totalsOf([a, b]);
+  assert.deepEqual([t.pass, t.fail, t.error, t.overridePass, t.passWithOverrides], [0, 0, 2, 0, 0]);
+  const md = formatSummary({ _provenance: { writtenAt: 'now', breakpoint: 1440, verdict: 'V' }, totals: t, rows: [a, b] });
+  assert.equal((md.match(/\| ERROR host suspended/g) || []).length, 2, 'both rows read ERROR, the structural one too'); assert.doesNotMatch(md, /→ PASS: drift/);
 });
 check('parseArgs: defaults, --out derived from --width, --no-probes drops both probe criteria', () => {
   const o = parseArgs(['node', 'x']);

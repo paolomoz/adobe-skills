@@ -467,6 +467,9 @@ export async function captureStitched(page, url, opts, { PNG, log = console.log,
     // A denial page a script rendered after domcontentloaded (gotoLive read the entry): exit 3, no PNG, no sidecar.
     const denialCheck = await recheckDenial(liveSession, page, url, entry.status());
 
+    // Rotating content at rest first, as the probes measure it (#147): an in-flight slide lands (the CSS freeze below
+    // would cancel it mid-way), endless animations are held at their start.
+    await liveSession.settleMotion(page);
     // Freeze animations/transitions/carets for stable chunks — AFTER settle.
     await page.addStyleTag({ content: '*,*::before,*::after{animation-play-state:paused!important;transition:none!important;caret-color:transparent!important;scroll-behavior:auto!important;}html{scroll-behavior:auto!important}' });
     // The CSS freeze stabilizes CSS animations only. It does NOT stop (a) <video> playback — autoplaying teaser

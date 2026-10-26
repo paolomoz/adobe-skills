@@ -246,11 +246,8 @@ into coverage with `update-coverage.mjs`. **Foundation first:** lint AND commit
 `styles.css`, header/footer CSS and the contract file BEFORE the first agent
 spawns; no token or custom-property rename after fan-out. **Disjoint clusters
 spawn concurrently** — a wave waits only on a real dependency. **Every tool call
-stays under 4 minutes, the main agent's included**: a long instrument (gate
-rounds, pixel loops, Playwright captures, deploy batches) goes through
-`run-bg.mjs start`, and `wait` is the NEXT tool call (it returns within its
-`--max`); never two long instruments as parallel tool calls in one turn, never
-two `wait`s in one command.
+stays under 4 minutes, the main agent's included**: long instruments go
+through `run-bg.mjs` (stardust SKILL.md § Wait discipline).
 
 **Template waves (#146)** — a gated template's remaining siblings, at scale: one template per
 wave (≤ ~135 pages). Register the captures (`node skills/stardust/scripts/state.mjs add

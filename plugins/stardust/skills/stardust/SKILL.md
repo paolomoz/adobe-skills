@@ -292,14 +292,11 @@ otherwise):
   at 1.6× write price — an owner setting, worth it for any multi-hour
   session.)
   The harness-neutral form of the same rule is replica's `run-bg.mjs`:
-  `start` detaches the instrument, `wait` returns within `--max` (default
-  100 s, ceiling 110 s — inside the shell tool's ~2-minute default timeout,
-  which applies only to a call that declares none) with verdict lines
-  only, exit 75 = still going, `wait` again as the NEXT call — never in a
+  `start` detaches the instrument, `wait` returns within `--max` (≤ 110 s,
+  run-bg's header) with verdict lines only, exit 75 = still going, `wait` again as the NEXT call — never in a
   shell loop, never after a `sleep`. The rule binds the main agent as it
   binds subagents: one long instrument in the foreground, or two long
-  instruments as parallel tool calls in one turn, is the same blocked step
-  (recorded: a 338 s main-agent turn cost one full cache re-write).
+  instruments as parallel tool calls in one turn, is the same blocked step.
 - **One shell, one working directory.** The harness's shell keeps its
   working directory from one tool call to the next: a `cd` inside a
   command moves every later command with it, and a path written from

@@ -2,7 +2,8 @@
 // skills/replica/scripts/test/run-bg.test.mjs — the run-bg.mjs contract: detached start, FIFO
 // concurrency slots (default 3), bounded wait (exit 75 while jobs are going; --max clamped to 110), instrument
 // deadline (124), verdict-line extraction, duplicate-name refusal, pid identity (a recycled pid is lost, holds no
-// slot, is never signalled), the value-flag swallow rule, log/clean (--all stops wrapper + instrument).
+// slot, is never signalled), the value-flag swallow rule, log/clean (--all stops wrapper + instrument), host suspension
+// (wall vs monotonic gap, late tick, the rows a gap hits, the report's note) and the STALLED minutes (#147).
 // Run: node plugins/stardust/skills/replica/scripts/test/run-bg.test.mjs   (about 10 s)
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -10,7 +11,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DEFAULT_SLOTS, MAX_CEILING_SEC, STILL_RUNNING_EXIT, VERDICT_RE } from '../run-bg.mjs';
+import { DEFAULT_SLOTS, MAX_CEILING_SEC, STILL_RUNNING_EXIT, VERDICT_RE, clockGap, gapsIn, stalledMin, suspendWatch } from '../run-bg.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = join(HERE, '..', 'run-bg.mjs');
@@ -205,6 +206,33 @@ await check('VERDICT_RE covers the gate instruments and skips prose', () => {
     'stitched stardust/replica/gates/home-1440/build.png: 1440x3690 from 8 chunks', 'gate.sh: IDENTITY ASSERTION FAILED — http://localhost:8791/x does not serve …', 'run-capped: stitch-shot build home@1440 exceeded 300s — killed (exit 124).',
     'gate.sh: reaped stale instrument pid 4 (running 16:02): stitch-shot.mjs', 'stitch-shot WARNING: FONT LOAD FAILED for declared face(s) Asar', '🔴 3 structural']) assert.match(l, VERDICT_RE, l);
   for (const l of ['consent dismissed via #onetrust-accept-btn-handler', 'passing 3 selectors through', 'no errors so far', 'diff image: stardust/replica/gates/home-1440/diff-iter2.png']) assert.doesNotMatch(l, VERDICT_RE, l);
+});
+
+await check('host suspension (#147): clockGap reads wall minus monotonic (and a late tick), suspendWatch collects, gapsIn picks the spans a gap hits', () => {
+  const T = Date.parse('2026-10-26T07:23:00Z');
+  assert.equal(clockGap({ wall: T, mono: 0 }, { wall: T + 10500, mono: 10400 }), null, 'an on-time tick');
+  assert.equal(clockGap({ wall: T, mono: 0 }, { wall: T + 90000, mono: 90000 }), null, 'a busy loop advances both clocks');
+  const g = clockGap({ wall: T, mono: 0 }, { wall: T + 2700000, mono: 10000 });
+  assert.deepEqual([g.sleptS, g.from, g.toMs], [2690, '2026-10-26T07:23:00.000Z', T + 2700000]);
+  assert.equal(clockGap({ wall: T, mono: 0 }, { wall: T + 400000, mono: 400000 }).sleptS, 400, 'a clock that counts the suspension: the late tick');
+  const reads = [{ wall: T, mono: 0 }, { wall: T + 10000, mono: 10000 }, { wall: T + 3610000, mono: 20000 }]; let i = 0; const seen = [];
+  const w = suspendWatch({ intervalMs: 0, clock: () => reads[i++], onGap: (x) => seen.push(x.sleptS) });
+  w.tick(); w.tick(); w.stop();
+  assert.deepEqual([w.gaps.length, seen], [1, [3590]]);
+  assert.deepEqual(gapsIn(w.gaps, T, T + 5000).length, 0, 'a row finished before the sleep');
+  assert.deepEqual(gapsIn(w.gaps, T + 5000, T + 3700000).length, 1, 'a row in flight across it');
+  assert.deepEqual(gapsIn(w.gaps, T + 3620000).length, 0, 'a row started after the wake');
+});
+
+await check('a silent running job is STALLED after --stall minutes; an ended job names its suspensions', () => {
+  const now = Date.parse('2026-10-26T09:00:00Z');
+  assert.equal(stalledMin({ lastOutputMs: now - 9 * 60000, nowMs: now }), 0);
+  assert.equal(stalledMin({ lastOutputMs: now - 12 * 60000, nowMs: now }), 12);
+  assert.equal(stalledMin({ lastOutputMs: now - 12 * 60000, nowMs: now, stallMin: 0 }), 0, '--stall 0 turns it off');
+  fakeState('slept', { endedAt: new Date().toISOString(), exit: 2, suspends: [{ from: '2026-10-26T07:23:00.000Z', to: '2026-10-26T08:08:00.000Z', fromMs: 0, toMs: 1, sleptS: 2700 }] });
+  const r = bg('status', 'slept');
+  assert.match(r.out, /slept {2}done exit=2.* — host suspended 1× \(2700s at 2026-10-26T07:23:00.000Z\): output in flight across it is not evidence/);
+  assert.equal(bg('status', '--stall').code, 125, '--stall needs a value');
 });
 
 rmSync(dir, { recursive: true, force: true });

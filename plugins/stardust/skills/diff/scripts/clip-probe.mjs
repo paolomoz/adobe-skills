@@ -336,7 +336,7 @@ export function parseArgs(argv) {
 
 /** Load + settle a page and run the inventory (shared with gate-all's --no-content path). */
 export async function probe(page, url, opts) {
-  const v = await visit(page, url, { warmup: opts.warmup });
+  const v = await visit(page, url, { warmup: opts.warmup, motion: true });
   const inv = await page.evaluate(inPage(clipInventoryInPage, { minCut: opts.minCut, rootSel: opts.main, maxFindings: opts.maxFindings }, morePrelude(opts.moreWords)));
   return { url, at: new Date().toISOString(), width: opts.width, status: v.status, settlePasses: v.passes, ...inv, groups: summarize(inv.findings) };
 }

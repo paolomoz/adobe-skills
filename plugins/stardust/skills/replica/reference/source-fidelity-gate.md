@@ -575,21 +575,22 @@ rather than erroring.
    captureBeyondViewport renders lazy-decoded images as gray placeholders
    even when the DOM says loaded. Stitch on BOTH sides — the instrument
    must be symmetric.
-5. **Freeze animations for capture, injected AFTER lazyload settle.**
-   Injection before the settle breaks some lazy loaders' swaps (recorded
-   failure mode). stitch-shot.mjs orders this correctly.
+5. **Motion at rest, AFTER the lazyload settle** (earlier breaks some lazy
+   loaders' swaps). Captures and probes alike (stitch-shot, measure-live
+   `visit`, #147) let an in-flight slide land, clear the timers and hold
+   endless animations at their start, both sides — a ticker or carousel is
+   measured at rest, never mid-slide; what still varies (a live feed, rAF
+   motion) is a `presence.json` counts-only region.
 6. **Overlays dismissed — BOTH classes, by clicking, not DOM removal** (so
    layout settles as a real visit does). Two classes, one shared
    `dismissOverlays` (stitch-shot and the diff probes alike; `gate.sh`
    carries `--consent <sel>` / `--dismiss <sel,...>` to both captures AND
    its probes, `--no-dismiss` turns it off everywhere in the round):
    (a) cookie consent (clicked accept; the flags above for a banner the
-   built-in candidates miss); (b) **timed marketing/newsletter interstitials** —
-   recorded (fashion retailer): an undismissed "Sign up, stay updated!"
-   modal fired ~5–9s after load and baked a pixel-diff contributor into the
-   LIVE capture, repeated at every chunk seam, that no prototype fidelity
-   could null out. These fire on a timer, so the dismissal polls for late
-   arrivals and stitch-shot sweeps again after the settle pass.
+   built-in candidates miss); (b) **timed marketing/newsletter interstitials**
+   (one fired ~5–9 s after load into every chunk seam of the live capture;
+   live-session's header) — the dismissal polls for late arrivals and
+   stitch-shot sweeps again after the settle pass.
 7. **Granularity parity for JOIN/SPLIT false-reds (#87)** — mirror live
    node granularity or confirm-justify per
    `recreation-procedure.md` § Granularity parity.
@@ -772,15 +773,14 @@ none visible on a local harness):
 
 ## The all-pages published-origin gate (gate-all) — four criteria (#125), tiered (#141)
 
-Why element criteria: a listing page passed pixel at 6.7 % with every card clipped (#125).
-
 `node stardust/scripts/replica/gate-all.mjs` (project root; through `run-bg.mjs`) gates every
 page that is `deployed` in `stardust/state.json`, or `migrated` with a delivered URL (state
 `liveUrl`, else the rollout coverage row) — never a hand-made state copy; a wave's `--only` slugs
 need only a deployed coverage row (#146). Workers keep their
 browsers across pages; the probes load each side once and settle it the same way
 (`measure-live.mjs`); the served side is measured decorated or not at all (a 429 / 5xx or an
-unloaded block is retried with back-off, then the row is an `error`, never a FAIL). It writes
+unloaded block is retried with back-off, then the row is an `error`, never a FAIL — as is a row spanning
+a host sleep, #147: re-run the `--only` set the run prints). It writes
 `stardust/replica/gates/all-<width>/<slug>/{origin,eds,diff}.png + pixel.json + content.json +
 clip.json [+ units.json]` and `summary.{json,md}`. **Verdict, per page — all four:**
 

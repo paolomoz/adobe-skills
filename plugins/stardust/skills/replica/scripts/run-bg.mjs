@@ -20,12 +20,12 @@
  *
  * Usage:
  *   node run-bg.mjs start --name <job> [--timeout <s>] [--slots <n>] -- <cmd> [args…]
- *   node run-bg.mjs wait   [--max <s>] [--tail <n>] [--grep <re>] [<job>…]
- *   node run-bg.mjs status [--tail <n>] [--grep <re>] [<job>…]
+ *   node run-bg.mjs wait   [--max <s>] [--tail <n>] [--grep <re>] [--stall <min>] [<job>…]
+ *   node run-bg.mjs status [--tail <n>] [--grep <re>] [--stall <min>] [<job>…]
  *   node run-bg.mjs log    <job> [--tail <n>] [--grep <re>]
  *   node run-bg.mjs clean  [--all]
  *   (every form: [--dir <d>], default stardust/.work/replica/bg, env RUN_BG_DIR)
- *   A value flag (--name --dir --timeout --slots --max --tail --grep) followed by
+ *   A value flag (--name --dir --timeout --slots --max --tail --grep --stall) followed by
  *   nothing or by another --flag is a usage error (exit 125) naming the flag —
  *   never a silently swallowed value.
  *
@@ -89,6 +89,13 @@
  * is unavailable (and no /proc) they stay null and `clean --all` cannot reach
  * an orphaned instrument — the wrapper's own group is still killed.
  *
+ * Host suspension and stalls (#147): a laptop sleep mid-run left one gate hung on stale browser connections and
+ * rows captured across the gap were garbage. The wrapper's heartbeat compares the wall clock with the monotonic
+ * one (a suspended host stops the latter): a gap is logged (`run-bg: host suspended …`) and kept in the state, and
+ * the report names it on the job — its in-flight output is not evidence. `wait` / `status` report a running job
+ * whose log has not grown for --stall minutes (default 10; env RUN_BG_STALL_MIN) as STALLED. gate-all runs the
+ * same watch itself (clockGap / suspendWatch / gapsIn are exported) and marks the rows it hits `error`.
+ *
  * Per-job exit codes are the instrument's (gate.sh: 0 PASS, 2 FAIL, 3 bot
  * challenge, 4 identity, 1 error); 124 = deadline, no verdict — re-run.
  *
@@ -97,7 +104,8 @@
 
 /* eslint-disable no-restricted-syntax, brace-style, object-curly-newline, max-len */
 import { spawn, spawnSync } from 'node:child_process';
-import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync, realpathSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync, realpathSync } from 'node:fs';
+import { performance } from 'node:perf_hooks';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DEADLINE_EXIT, runCapped } from './run-capped.mjs';
@@ -116,6 +124,13 @@ export const DEFAULT_MAX_SEC = 100;
 // their room, and still returns inside the context cache's five minutes from the start of the previous model request.
 export const MAX_CEILING_SEC = 110;
 export const DEFAULT_TAIL = 8;
+// A running job whose log has not grown for this many minutes is reported STALLED (a gate logs every stage of every row).
+export const DEFAULT_STALL_MIN = 10;
+// Host suspension: the heartbeat period, the wall-minus-monotonic gap that counts as a suspension, and the late tick
+// that counts too (a clock that keeps counting while suspended, a frozen process).
+export const HEARTBEAT_MS = 10000;
+export const SUSPEND_MIN_GAP_MS = 30000;
+export const SUSPEND_MAX_TICK_MS = 300000;
 export const STILL_RUNNING_EXIT = 75;
 // With nothing going and no names given, `wait`/`status` report the latest batch: jobs that ended
 // within this window of the newest ending. Earlier sessions' jobs stay on disk (their logs are
@@ -140,8 +155,8 @@ const SELF = fileURLToPath(import.meta.url);
 
 const HELP = `Usage:
   node run-bg.mjs start --name <job> [--timeout <s>=${DEFAULT_TIMEOUT_SEC}] [--slots <n>=${DEFAULT_SLOTS}] -- <cmd> [args…]
-  node run-bg.mjs wait   [--max <s>=${DEFAULT_MAX_SEC}] [--tail <n>=${DEFAULT_TAIL}] [--grep <re>] [--all] [<job>…]
-  node run-bg.mjs status [--tail <n>] [--grep <re>] [--all] [<job>…]
+  node run-bg.mjs wait   [--max <s>=${DEFAULT_MAX_SEC}] [--tail <n>=${DEFAULT_TAIL}] [--grep <re>] [--stall <min>=${DEFAULT_STALL_MIN}] [--all] [<job>…]
+  node run-bg.mjs status [--tail <n>] [--grep <re>] [--stall <min>] [--all] [<job>…]
   node run-bg.mjs log    <job> [--tail <n>=40] [--grep <re>]
   node run-bg.mjs clean  [--all]
   (all: [--dir <d>], default ${DEFAULT_DIR})`;
@@ -218,6 +233,31 @@ const isPending = (st) => ['queued', 'running'].includes(phase(st));
 // lost, but the instrument the wrapper launched is still running.
 const isOrphan = (st) => phase(st) === 'lost' && childAlive(st);
 
+// ---- host suspension (#147) --------------------------------------------------------------------
+const systemClock = () => ({ wall: Date.now(), mono: performance.now() });
+/** Two heartbeat readings ({ wall, mono } ms) → the suspended span { from, to, fromMs, toMs, sleptS } or null. */
+export function clockGap(prev, now, { minGapMs = SUSPEND_MIN_GAP_MS, maxTickMs = SUSPEND_MAX_TICK_MS } = {}) {
+  const wall = now.wall - prev.wall; const slept = wall - (now.mono - prev.mono);
+  if (slept < minGapMs && wall < maxTickMs) return null;
+  return { from: new Date(prev.wall).toISOString(), to: new Date(now.wall).toISOString(), fromMs: prev.wall, toMs: now.wall, sleptS: Math.round((slept >= minGapMs ? slept : wall) / 1000) };
+}
+/** A heartbeat that collects the gaps (onGap per gap); `tick()` reads once more (a caller about to judge a row). */
+export function suspendWatch({ intervalMs = HEARTBEAT_MS, onGap = () => {}, clock = systemClock, ...limits } = {}) {
+  let prev = clock(); const gaps = [];
+  const tick = () => { const now = clock(); const g = clockGap(prev, now, limits); prev = now; if (g) { gaps.push(g); onGap(g); } return g; };
+  const timer = intervalMs ? setInterval(tick, intervalMs) : null;
+  if (timer && timer.unref) timer.unref();
+  return { gaps, tick, stop: () => { if (timer) clearInterval(timer); } };
+}
+/** The gaps that overlap the span [fromMs, toMs] — work in flight across a suspension. */
+export const gapsIn = (gaps, fromMs, toMs = Date.now()) => (gaps || []).filter((g) => g.toMs >= fromMs && g.fromMs <= toMs);
+/** Minutes a running job has been silent (its log's last write, else its launch) when that reaches stallMin, else 0. */
+export function stalledMin({ lastOutputMs, nowMs = Date.now(), stallMin = DEFAULT_STALL_MIN }) {
+  const m = Math.floor((nowMs - lastOutputMs) / 60000);
+  return stallMin > 0 && Number.isFinite(m) && m >= stallMin ? m : 0;
+}
+const suspendNote = (st) => (st.suspends && st.suspends.length ? ` — host suspended ${st.suspends.length}× (${st.suspends.map((g) => `${g.sleptS}s at ${g.from}`).join(', ')}): output in flight across it is not evidence, re-run those rows` : '');
+
 // ---- start -------------------------------------------------------------------------------------
 export function start(dir, name, cmd, args, { timeoutSec = DEFAULT_TIMEOUT_SEC, slots = DEFAULT_SLOTS } = {}) {
   if (!name || !NAME_RE.test(name)) throw new UsageError(`run-bg: --name must match ${NAME_RE} (got "${name}")\n${HELP}`);
@@ -253,7 +293,12 @@ async function runWrapper(dir, name) {
   const child = childOf(process.pid);
   st = writeState(dir, { ...st, launchedAt: new Date().toISOString(), childPid: child?.pid ?? null, childStart: child?.start ?? null });
   console.log(`run-bg: ${name} launched ${st.launchedAt} (timeout ${st.timeoutSec || 'none'}s): ${[st.cmd, ...st.args].join(' ')}`);
+  const watch = suspendWatch({ onGap: (g) => {
+    console.log(`run-bg: host suspended ${g.sleptS}s (${g.from} → ${g.to}) — output in flight across the gap is not evidence; re-run it`);
+    st = writeState(dir, { ...st, suspends: [...(st.suspends || []), g] });
+  } });
   const code = await run;
+  watch.stop();
   writeState(dir, { ...st, endedAt: new Date().toISOString(), exit: code, timedOut: code === DEADLINE_EXIT });
   console.log(`run-bg: ${name} ended exit=${code}`);
   process.exitCode = code;
@@ -273,22 +318,26 @@ export function verdictLines(p, { tail = DEFAULT_TAIL, grep = null } = {}) {
   return out;
 }
 
-export function describe(st) {
+export function describe(st, { dir = null, stallMin = DEFAULT_STALL_MIN, nowMs = Date.now() } = {}) {
   const ph = phase(st);
   if (ph === 'queued') return `${st.name}  queued ${secondsBetween(st.queuedAt)}s (waiting for a slot)`;
-  if (ph === 'running') return `${st.name}  running ${secondsBetween(st.launchedAt)}s`;
+  if (ph === 'running') {
+    let last = new Date(st.launchedAt).getTime(); try { if (dir) last = Math.max(last, statSync(logPath(dir, st.name)).mtimeMs); } catch { /* no log yet */ }
+    const m = stalledMin({ lastOutputMs: last, nowMs, stallMin });
+    return `${st.name}  running ${secondsBetween(st.launchedAt)}s${m ? ` — STALLED: no output for ${m} min (host sleep? hung browser?) — \`log ${st.name}\`, then \`clean --all\` and re-run` : ''}${suspendNote(st)}`;
+  }
   if (ph === 'lost') return `${st.name}  lost — wrapper gone without an exit (kill -9? reboot?)${isOrphan(st) ? `; its instrument (pid ${st.childPid}) still runs — \`clean --all\` stops it` : ''} — re-run`;
   const took = st.launchedAt ? ` in ${secondsBetween(st.launchedAt, st.endedAt)}s` : '';
-  return st.timedOut ? `${st.name}  deadline ${st.timeoutSec}s exceeded (exit ${DEADLINE_EXIT}: no verdict — re-run, or raise --timeout for a legitimately huge page)${took}` : `${st.name}  done exit=${st.exit}${took}`;
+  return st.timedOut ? `${st.name}  deadline ${st.timeoutSec}s exceeded (exit ${DEADLINE_EXIT}: no verdict — re-run, or raise --timeout for a legitimately huge page)${took}${suspendNote(st)}` : `${st.name}  done exit=${st.exit}${took}${suspendNote(st)}`;
 }
 
-export function report(dir, names, { tail = DEFAULT_TAIL, grep = null, hidden = 0, elapsedSec = 0, ceilingSec = 0 } = {}) {
+export function report(dir, names, { tail = DEFAULT_TAIL, grep = null, hidden = 0, elapsedSec = 0, ceilingSec = 0, stallMin = DEFAULT_STALL_MIN } = {}) {
   const lines = []; let pending = 0;
   for (const name of names) {
     const st = readState(dir, name);
     if (!st) { lines.push(`${name}  no such job in ${dir}`); continue; }
     if (isPending(st)) pending += 1;
-    lines.push(describe(st));
+    lines.push(describe(st, { dir, stallMin }));
     if (!isPending(st)) for (const l of verdictLines(logPath(dir, name), { tail, grep })) lines.push(`  ${l}`);
   }
   if (!names.length) lines.push(`run-bg: no jobs in ${dir}`);
@@ -310,7 +359,7 @@ function pickNames(dir, requested, { all = false } = {}) {
   return { names: recent.map((j) => j.name), hidden: jobs.length - recent.length };
 }
 
-export async function wait(dir, requested, { maxSec = DEFAULT_MAX_SEC, tail, grep, all = false } = {}) {
+export async function wait(dir, requested, { maxSec = DEFAULT_MAX_SEC, tail, grep, all = false, stallMin } = {}) {
   if (!Number.isFinite(maxSec) || maxSec < 0) throw new UsageError(`run-bg: --max must be a number of seconds\n${HELP}`);
   let ceilingSec = maxSec;
   if (maxSec > MAX_CEILING_SEC) { ceilingSec = MAX_CEILING_SEC; console.error(`run-bg: --max ${maxSec} clamped to ${MAX_CEILING_SEC}s — the agent's shell tool's default timeout is about two minutes and applies to a call that declares none; ${MAX_CEILING_SEC} s returns inside it and leaves startup and the report their room (a declared longer timeout is honoured, but a step must still return before the context cache expires)`); }
@@ -321,10 +370,10 @@ export async function wait(dir, requested, { maxSec = DEFAULT_MAX_SEC, tail, gre
     if (!pending.length || (Date.now() - t0) / 1000 >= ceilingSec) break;
     await sleep(Math.min(POLL_MS, Math.max(50, ceilingSec * 1000 - (Date.now() - t0))));
   }
-  return report(dir, names, { tail, grep, hidden, elapsedSec: (Date.now() - t0) / 1000, ceilingSec });
+  return report(dir, names, { tail, grep, hidden, elapsedSec: (Date.now() - t0) / 1000, ceilingSec, stallMin });
 }
 
-export function status(dir, requested, { tail, grep, all = false } = {}) { const { names, hidden } = pickNames(dir, requested, { all }); return report(dir, names, { tail, grep, hidden }); }
+export function status(dir, requested, { tail, grep, all = false, stallMin } = {}) { const { names, hidden } = pickNames(dir, requested, { all }); return report(dir, names, { tail, grep, hidden, stallMin }); }
 
 export function showLog(dir, name, { tail = 40, grep = null } = {}) {
   if (!name) throw new UsageError(`run-bg: log needs a <job>\n${HELP}`);
@@ -376,7 +425,7 @@ export async function clean(dir, { all = false } = {}) {
 // ---- cli ---------------------------------------------------------------------------------------
 function parse(argv) {
   const [sub, ...rest] = argv;
-  const o = { dir: process.env.RUN_BG_DIR || DEFAULT_DIR, names: [], name: null, timeoutSec: DEFAULT_TIMEOUT_SEC, slots: Number(process.env.RUN_BG_SLOTS) || Number(process.env.STARDUST_BROWSER_SLOTS) || DEFAULT_SLOTS, maxSec: DEFAULT_MAX_SEC, tail: undefined, grep: null, all: false, cmd: [] };
+  const o = { dir: process.env.RUN_BG_DIR || DEFAULT_DIR, names: [], name: null, timeoutSec: DEFAULT_TIMEOUT_SEC, slots: Number(process.env.RUN_BG_SLOTS) || Number(process.env.STARDUST_BROWSER_SLOTS) || DEFAULT_SLOTS, maxSec: DEFAULT_MAX_SEC, stallMin: Number(process.env.RUN_BG_STALL_MIN) || DEFAULT_STALL_MIN, tail: undefined, grep: null, all: false, cmd: [] };
   const num = (flag, v) => { const n = Number(v); if (!Number.isFinite(n)) throw new UsageError(`run-bg: ${flag} needs a number (got ${v})\n${HELP}`); return n; };
   for (let i = 0; i < rest.length; i += 1) {
     const a = rest[i];
@@ -389,6 +438,7 @@ function parse(argv) {
     else if (a === '--slots') o.slots = num(a, value());
     else if (a === '--max') o.maxSec = num(a, value());
     else if (a === '--tail') o.tail = num(a, value());
+    else if (a === '--stall') o.stallMin = num(a, value());
     else if (a === '--grep') { const v = value(); try { o.grep = new RegExp(v); } catch (e) { throw new UsageError(`run-bg: bad --grep ${v}: ${e.message}`); } }
     else if (a === '--all') o.all = true;
     else if (a.startsWith('--')) throw new UsageError(`run-bg: unknown flag ${a}\n${HELP}`);
@@ -409,8 +459,8 @@ async function cli(argv) {
       console.log(`run-bg: queued ${r.name} → ${r.log}   (next step: node stardust/scripts/replica/run-bg.mjs wait)`);
       return 0;
     }
-    case 'wait': { const r = await wait(o.dir, o.names, { maxSec: o.maxSec, tail: o.tail, grep: o.grep, all: o.all }); console.log(r.text); return r.pending ? STILL_RUNNING_EXIT : 0; }
-    case 'status': { const r = status(o.dir, o.names, { tail: o.tail, grep: o.grep, all: o.all }); console.log(r.text); return 0; }
+    case 'wait': { const r = await wait(o.dir, o.names, { maxSec: o.maxSec, tail: o.tail, grep: o.grep, all: o.all, stallMin: o.stallMin }); console.log(r.text); return r.pending ? STILL_RUNNING_EXIT : 0; }
+    case 'status': { const r = status(o.dir, o.names, { tail: o.tail, grep: o.grep, all: o.all, stallMin: o.stallMin }); console.log(r.text); return 0; }
     case 'log': console.log(showLog(o.dir, o.names[0], { tail: o.tail ?? 40, grep: o.grep })); return 0;
     case 'clean': console.log(await clean(o.dir, { all: o.all })); return 0;
     case '__run': await runWrapper(o.dir, o.name); return process.exitCode ?? 0;

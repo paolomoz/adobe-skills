@@ -15,7 +15,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { EdsNotReadyError, REAL_CHROME_UA, browserTier, defaultWaitUntil, dismissOverlays, edsReady, gotoLive, isLiveHttpUrl, launchStealthHeaded, newLiveContext, readinessReason, watchServed } from './live-session.mjs';
+import { EdsNotReadyError, REAL_CHROME_UA, browserTier, defaultWaitUntil, dismissOverlays, edsReady, gotoLive, isLiveHttpUrl, launchStealthHeaded, newLiveContext, readinessReason, settleMotion, watchServed } from './live-session.mjs';
 
 export { browserTier };
 
@@ -67,9 +67,10 @@ export async function settle(page, { passes = 4, step = 400, dwell = 250, emptyS
 /**
  * Navigate (fail-loud live-session contract: a challenge throws BotChallengeError, a 404 build is measured
  * with a warning), dismiss overlays (`extra` = a site's own consent / dismiss selectors, tried first), settle.
- * `warmup` visits another URL first in the same context.
+ * `warmup` visits another URL first in the same context. `motion` (the gate probes, #147): then bring rotating
+ * content to rest (live-session settleMotion) — never for an instrument that interacts with the page afterwards.
  */
-export async function visit(page, url, { warmup = null, settle: settleOpts = {}, dismiss = true, solveWindow = true, timeoutMs = 90000, httpError = 'measure', eds = false, extra = [] } = {}) {
+export async function visit(page, url, { warmup = null, settle: settleOpts = {}, dismiss = true, solveWindow = true, timeoutMs = 90000, httpError = 'measure', eds = false, extra = [], motion = false } = {}) {
   if (warmup) {
     await gotoLive(page, warmup, { waitUntil: 'domcontentloaded', timeoutMs, settleMs: 0, solveWindow, httpError: 'measure' });
     await page.waitForTimeout(2500);
@@ -86,7 +87,7 @@ export async function visit(page, url, { warmup = null, settle: settleOpts = {},
     const s = await settle(page, settleOpts);
     if (dismiss) { try { await dismissOverlays(page, { extra, lateWindowMs: 0 }); } catch { /* none */ } }
     if (watch) notReady(await edsReady(page, { timeoutMs: 8000 }));
-    return { status: resp ? resp.status() : null, ...s };
+    return { status: resp ? resp.status() : null, ...s, ...(motion ? { motion: await settleMotion(page) } : {}) };
   } finally { if (watch) watch.stop(); }
 }
 

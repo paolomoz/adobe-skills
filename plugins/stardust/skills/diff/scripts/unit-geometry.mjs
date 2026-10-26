@@ -219,7 +219,7 @@ export function parseArgs(argv) {
 export async function measureUnits(browser, url, sels, { width, locale, warmup, n, eds = false, extra = [] }) {
   const { ctx, page } = await openPage(browser, { width, locale });
   try {
-    const v = await visit(page, url, { warmup, eds, extra });
+    const v = await visit(page, url, { warmup, eds, extra, motion: true });
     return { url, at: new Date().toISOString(), status: v.status, docH: v.docH, bySel: await unitsOnPage(page, sels, n), width };
   } finally { await ctx.close(); }
 }

@@ -40,18 +40,24 @@
  * could not be probed — never a fail) [+ required units within --unit-tol]. Structural row: the same minus
  * pixel, the height from the probes, plus the skeleton. The pixel-only verdict is recorded beside it.
  *
+ * HOST SUSPENSION (#147): a heartbeat compares the wall and monotonic clocks (run-bg suspendWatch). On a gap every
+ * worker's browsers are closed (stale connections hung a run once; in-flight work throws) and relaunched on the next
+ * page, and every row whose work spans the gap is an ERROR naming it (suspendRow) — never PASS/FAIL; the summary
+ * lists the gaps and the slugs to re-run.
+ *
  * Sidecars in <out>/, each entry documented: masks.json, overrides.json, clip-allow.json, presence.json;
  * repeated units from stardust/replica/units.json (unit-geometry.mjs header).
  *
  * Requires playwright, pixelmatch, pngjs (project devDependencies); stitch-shot.mjs, pixel-compare.mjs and
  * gate-tier.mjs next to this file; the diff skill's scripts dir alongside. Exit: 0 all PASS (overrides count),
- * 2 any FAIL, 1 error. `verdict`, `formatSummary`, `parseArgs`, `selectPages`, `sidecarEntry`, `totalsOf`, `plainUrl` are exported.
+ * 2 any FAIL, 1 error. `verdict`, `suspendRow`, `formatSummary`, `parseArgs`, `selectPages`, `sidecarEntry`, `totalsOf`, `plainUrl` are exported.
  */
 import { spawn } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { contentCountOk, indexImportCheck, parseSkeleton, planTiers, resolveRoles } from './gate-tier.mjs';
+import { gapsIn, suspendWatch } from './run-bg.mjs';
 
 const HELP = `gate-all — published-origin gate over every deployed page: pixel + height + clip + content, tiered (#125, #141)
 
@@ -161,6 +167,13 @@ export function verdict({ pixel = {}, clip = null, content = null, units = null,
   return { originH, edsH, ...(st ? { heightDelta, heightSource: 'docH', skeletonPass } : {}), pixelPass: st ? null : !!pixelPass, heightPass: !!heightPass, clipped, clipPass, clipAllowance: allowance, contentPass, contentNA: contentOn && !cTot ? (content && content.error) || 'not probed' : null, unitPass, pixelOnlyPass, pass: !!pass, passWithOverride: !!pass || !!override, reasons };
 }
 
+/** A row whose work spans a host suspension (#147) → an ERROR naming the gap(s): its captures and probes are not evidence. */
+export function suspendRow(row, hits) {
+  if (!hits || !hits.length) return row;
+  const why = `host suspended ${hits.map((g) => `${g.sleptS}s at ${g.from}`).join(', ')} mid-row — re-run`;
+  return { ...row, suspended: hits.map((g) => ({ from: g.from, to: g.to, sleptS: g.sleptS })), pass: false, passWithOverride: false, pixelPass: null, pixelOnlyPass: null, pct: null, textPct: null, originH: null, edsH: null, heightDelta: null, error: why, reasons: [why] };
+}
+
 const cell = (v, suffix = '') => (v == null ? 'n/a' : `${v}${suffix}`);
 const gateCell = (r) => (!r.gateTier ? '-' : r.gateTier === 'structural' ? 'structural' : r.tierReason && /^(sample|escalated)/.test(r.tierReason) ? `full (${r.tierReason.split(':')[0]})` : 'full');
 export function formatSummary(summary) {
@@ -171,9 +184,9 @@ export function formatSummary(summary) {
   for (const r of [...summary.rows].sort((a, b) => Number(b.pass) - Number(a.pass) || (a.pct ?? 999) - (b.pct ?? 999))) {
     const content = r.contentNA ? `n/a (${r.contentNA})` : r.content ? `MISSING ${r.content.missing} / HIDDEN ${r.content.hidden}${r.content.controlState ? ` / state ${r.content.controlState}` : ''}` : 'n/a';
     const units = r.units ? `off ${r.units.off} hidden ${r.units.hidden} missing ${r.units.missing}${r.unitsRequired ? '' : ' (advisory)'}` : '-';
-    const verdictCell = r.error && r.pct == null && r.gateTier !== 'structural' ? `ERROR ${r.error}` : r.pass ? (r.gateTier === 'structural' ? 'PASS (structural)' : 'PASS') : r.pixelOnlyPass ? 'FAIL (elements)' : 'FAIL';
+    const verdictCell = r.suspended || (r.error && r.pct == null && r.gateTier !== 'structural') ? `ERROR ${r.error}` : r.pass ? (r.gateTier === 'structural' ? 'PASS (structural)' : 'PASS') : r.pixelOnlyPass ? 'FAIL (elements)' : 'FAIL';
     const pctCell = r.gateTier === 'structural' ? 'structural' : `${cell(r.pct)}${r.textPct != null ? ` (${r.textPct})` : ''}`;
-    rows.push(`| \`${r.path}\` | ${r.template ?? '-'} | ${r.tier ?? '-'} | ${gateCell(r)} | ${r.origin || '-'}${r.origin === 'crawl-fullpage' ? ' ⚠asym' : ''} | ${r.browser || '-'} | ${pctCell} | ${cell(r.heightDelta)}${r.heightSource === 'docH' ? ' (docH)' : ''} | ${cell(r.clipped)}${r.clipAllowance ? ` (allow ${r.clipAllowance})` : ''} | ${content} | ${units} | ${verdictCell}${r.masked ? ` (masked ${r.maskedRows} rows: ${r.maskReason})` : ''}${r.override && !r.pass ? ` → ${r.override.verdict}: ${r.override.reason}` : ''} | ${r.reasons.join('; ') || '-'} |`);
+    rows.push(`| \`${r.path}\` | ${r.template ?? '-'} | ${r.tier ?? '-'} | ${gateCell(r)} | ${r.origin || '-'}${r.origin === 'crawl-fullpage' ? ' ⚠asym' : ''} | ${r.browser || '-'} | ${pctCell} | ${cell(r.heightDelta)}${r.heightSource === 'docH' ? ' (docH)' : ''} | ${cell(r.clipped)}${r.clipAllowance ? ` (allow ${r.clipAllowance})` : ''} | ${content} | ${units} | ${verdictCell}${r.masked ? ` (masked ${r.maskedRows} rows: ${r.maskReason})` : ''}${r.override && !r.pass && !r.suspended ? ` → ${r.override.verdict}: ${r.override.reason}` : ''} | ${r.reasons.join('; ') || '-'} |`);
   }
   return `${head.join('\n')}${rows.join('\n')}\n`;
 }
@@ -181,8 +194,8 @@ export function formatSummary(summary) {
 /** Totals over the rows. A structural row is gated (never an error) unless its probes failed. */
 export function totalsOf(rows) {
   const n = (f) => rows.filter(f).length;
-  const measured = (r) => (r.gateTier === 'structural' ? r.originH != null : r.pct != null);
-  const t = { pages: rows.length, pass: n((r) => r.pass), pixelOnlyPass: n((r) => r.pixelOnlyPass), overridePass: n((r) => !r.pass && r.override), fail: n((r) => !r.pass && measured(r)), error: n((r) => !measured(r)),
+  const measured = (r) => !r.suspended && (r.gateTier === 'structural' ? r.originH != null : r.pct != null);
+  const t = { pages: rows.length, pass: n((r) => r.pass), pixelOnlyPass: n((r) => r.pixelOnlyPass), overridePass: n((r) => !r.pass && r.override && !r.suspended), fail: n((r) => !r.pass && measured(r)), error: n((r) => !measured(r)),
     failPixel: n((r) => r.pct != null && !r.pixelPass), failHeight: n((r) => measured(r) && !r.heightPass), failClip: n((r) => r.clipPass === false), failContent: n((r) => r.contentPass === false), failUnits: n((r) => r.unitPass === false), contentNA: n((r) => r.contentNA), asymmetricOrigins: n((r) => r.originAsymmetric), degradedTier: n((r) => r.browser && r.browser !== 'chrome') };
   if (rows.some((r) => r.gateTier)) Object.assign(t, { full: n((r) => r.gateTier !== 'structural'), structural: n((r) => r.gateTier === 'structural'), structuralPass: n((r) => r.gateTier === 'structural' && r.pass), sampled: n((r) => /^sample/.test(r.tierReason || '')), escalated: n((r) => /^escalated/.test(r.tierReason || '')) });
   t.passWithOverrides = t.pass + t.overridePass;
@@ -308,6 +321,11 @@ async function main() {
   if (!existsSync(opts.state)) { console.error(`gate-all: ${opts.state} not found — run from the project root or pass --state`); process.exit(1); }
   if (!DIFF_DIR) { console.error('gate-all: the diff skill\'s scripts dir was not found next to this one (../../diff/scripts or ../diff) — copy it (replica SKILL.md § Setup)'); process.exit(1); }
   const T0 = Date.now(); const tm = timer();
+  const liveWorkers = new Set(); const spans = {}; // slug → the wall ms its work began (a row spanning a suspension is an error)
+  const watch = suspendWatch({ onGap: (g) => {
+    console.log(`${new Date().toISOString()} host suspended ${g.sleptS}s (${g.from} → ${g.to}) — browsers recycled, rows in flight marked error`);
+    for (const w of liveWorkers) w.close().catch(() => {});
+  } });
   const state = readJson(opts.state);
   const all = opts.stage === 'prototype'
     ? (state.pages || []).filter((p) => p.prototypePath && p.url).map((p) => ({ ...p, liveUrl: `${opts.protoBase || 'http://localhost:8791'}/${basename(p.prototypePath)}`, templates: [p.template].filter(Boolean) }))
@@ -467,7 +485,8 @@ async function main() {
   const isSib = (p) => opts.tiered && roles[p.slug] && roles[p.slug].role === 'sibling';
   for (const p of pages) if (isSib(p)) groups.set(roles[p.slug].archetype, [...(groups.get(roles[p.slug].archetype) || []), p]);
 
-  const rowOf = (p) => {
+  const rowOf = (p) => { watch.tick(); return suspendRow(rowOfMeasured(p), gapsIn(watch.gaps, spans[p.slug] ?? T0)); };
+  const rowOfMeasured = (p) => {
     const r = results[p.slug] || {}; const px = r.pixel || {}; const pl = plan[p.slug] || { gateTier: 'full', reason: null };
     const structural = pl.gateTier === 'structural' ? { originH: r.heights ? r.heights.origin : null, edsH: r.heights ? r.heights.eds : null, skeleton: pl.skeleton ? { ok: pl.skeleton.orderOk, reason: pl.skeleton.reason } : null } : null;
     const ca = sidecar(CLIP_ALLOW, p); const prs = sidecar(PRESENCE, p);
@@ -520,6 +539,7 @@ async function main() {
   // full: captures → probes → pixel (async, finalize after); structural: probes → row → PASS stands, else the full row
   async function handle(w, { p, mode }) {
     let comparing = false;
+    if (spans[p.slug] == null) spans[p.slug] = Date.now();
     try {
       if (mode === 'capture') { await captures(p, w); startCompare(p); comparing = true; return; }
       const full = mode === 'full' || plan[p.slug].gateTier === 'full';
@@ -527,6 +547,7 @@ async function main() {
       await probe(w, p);
       if (!full) {
         const row = rowOf(p);
+        if (row.suspended) { finalRows[p.slug] = row; log(`${p.slug} → ERROR ${row.error}`); return; }
         if (plan[p.slug].gateTier === 'structural' && row.pass) { finalRows[p.slug] = row; structuralDone.add(p.slug); log(`structural ${p.slug} → PASS (Δh ${row.heightDelta} docH, clipped ${row.clipped}, content ${row.content ? `MISSING ${row.content.missing} HIDDEN ${row.content.hidden}` : 'n/a'})`); return; }
         if (plan[p.slug].gateTier === 'structural') { plan[p.slug] = { ...plan[p.slug], gateTier: 'full', reason: `escalated: ${row.reasons.join('; ') || 'structural row flagged'}` }; log(`structural ${p.slug} → flagged (${plan[p.slug].reason}) → full row`); }
         await captures(p, w);
@@ -547,6 +568,7 @@ async function main() {
   for (const p of pages) if (!isSib(p)) { plan[p.slug] = { gateTier: 'full', reason: (roles[p.slug] && roles[p.slug].role) || 'unique' }; enqueue(p, 'full'); }
   for (const arch of [...groups.keys()]) if (!inRun.has(arch)) planGroup(arch); // gated (or not) in an earlier run
   const workers = Array.from({ length: Math.max(1, Math.min(opts.concurrency, pages.length)) }, () => makeWorker({ chromium, ls, width: opts.width, tm }));
+  workers.forEach((w) => liveWorkers.add(w));
   await Promise.all(workers.map(async (w) => {
     for (;;) {
       const t = queue.shift();
@@ -559,20 +581,23 @@ async function main() {
   // an archetype outside the selection whose siblings never got planned (it has no row anywhere) — plan them now
   for (const arch of [...groups.keys()]) { planGroup(arch); }
   if (queue.length) {
-    const w = makeWorker({ chromium, ls, width: opts.width, tm });
+    const w = makeWorker({ chromium, ls, width: opts.width, tm }); liveWorkers.add(w);
     while (queue.length || pending.size) { const t = queue.shift(); if (t) await handle(w, t); else await sleep(300); }
     await w.close();
   }
 
   const rows = pages.map((p) => finalRows[p.slug] || rowOf(p));
+  watch.stop();
   const totals = totalsOf(rows);
   const originHost = (() => { try { return new URL(pages[0].url).origin; } catch { return null; } })();
   const timing = { wallS: Math.round((Date.now() - T0) / 1000), workers: workers.length, stages: tm.kinds };
-  const summary = { _provenance: { writtenBy: 'gate-all.mjs', writtenAt: new Date().toISOString(), stage: opts.stage, breakpoint: opts.width, threshold: opts.threshold, heightTolerance: opts.heightTol, clipMax: opts.clipMax, unitTol: opts.unitTol, criteria: { pixel: true, height: true, clip: opts.clip, content: opts.content }, verdict: `overlap pixel % ≤ ${opts.threshold} AND |Δh| ≤ ${Math.round(opts.heightTol * 100)}% of origin height${opts.clip ? ` AND clipped ≤ ${opts.clipMax} (+ documented allowance)` : ''}${opts.content ? ' AND content MISSING + HIDDEN links/headings = 0' : ''}`, tiers: opts.tiered ? { sample: opts.sample, seed: opts.seed, rule: 'source-fidelity-gate.md § The all-pages published-origin gate (#141)' } : null, timing, origin: originHost, eds: opts.edsHost || (() => { try { return new URL(pages[0].liveUrl).origin; } catch { return null; } })(), edsHostOverride: opts.edsHost || null, only: opts.only }, totals, rows };
+  const summary = { _provenance: { writtenBy: 'gate-all.mjs', writtenAt: new Date().toISOString(), stage: opts.stage, breakpoint: opts.width, threshold: opts.threshold, heightTolerance: opts.heightTol, clipMax: opts.clipMax, unitTol: opts.unitTol, criteria: { pixel: true, height: true, clip: opts.clip, content: opts.content }, verdict: `overlap pixel % ≤ ${opts.threshold} AND |Δh| ≤ ${Math.round(opts.heightTol * 100)}% of origin height${opts.clip ? ` AND clipped ≤ ${opts.clipMax} (+ documented allowance)` : ''}${opts.content ? ' AND content MISSING + HIDDEN links/headings = 0' : ''}`, tiers: opts.tiered ? { sample: opts.sample, seed: opts.seed, rule: 'source-fidelity-gate.md § The all-pages published-origin gate (#141)' } : null, timing, origin: originHost, eds: opts.edsHost || (() => { try { return new URL(pages[0].liveUrl).origin; } catch { return null; } })(), edsHostOverride: opts.edsHost || null, only: opts.only, suspends: watch.gaps.length ? watch.gaps : undefined }, totals, rows };
   const md = formatSummary(summary);
   if (opts.only) { mkdirSync(join(opts.out, 'runs'), { recursive: true }); const f = join(opts.out, 'runs', `${new Date().toISOString().replace(/[:.]/g, '-')}-${opts.only[0]}.json`); writeFileSync(f, JSON.stringify(summary, null, 2)); console.log(md); console.log(`run → ${f}`); }
   else { writeFileSync(join(opts.out, 'summary.json'), JSON.stringify(summary, null, 2)); writeFileSync(join(opts.out, 'summary.md'), md); console.log(md.split('\n').slice(0, 7).join('\n')); console.log(`summary → ${join(opts.out, 'summary.md')}`); }
   console.log(JSON.stringify(totals)); console.log(`timing ${JSON.stringify(timing)}`);
+  const slept = rows.filter((r) => r.suspended).map((r) => r.slug);
+  if (slept.length) console.log(`gate-all: host suspended ${watch.gaps.length}× — ${slept.length} row(s) are errors, re-run them: --only ${slept.join(',')}`);
   process.exitCode = totals.pass + totals.overridePass === totals.pages ? 0 : 2;
 }
 
